@@ -1221,10 +1221,29 @@ init();
 
 @app.route("/")
 def index():
-    sid = request.cookies.get("sid")
-    if not sid or sid not in SESSIONS:
-        return INDEX_HTML  # the JS detects a 401 on /api/me and shows the login view
-    return INDEX_HTML
+    return """
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <!-- Etiqueta de verificación de Google Search Console -->
+        <meta name="google-site-verification" content="fVPStX8S1C6nbk4fDoFzFBf0Gosa5x1hszaeeMgIWRA" />
+        <title>SD EOT Exam Management Tool</title>
+    </head>
+    <body style="font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px;">
+        <h1>SD EOT Exam Management Tool</h1>
+        <p>
+          SD EOT Exam is an internal grading utility designed to process, review, 
+          and generate feedback for student submissions in linked Google Forms.
+        </p>
+        <p><a href="/login">Log in with Google</a></p>
+        <hr>
+        <footer>
+          <a href="/privacy">Privacy Policy</a> | <a href="/terms">Terms of Service</a>
+        </footer>
+    </body>
+    </html>
+    """
 
 
 if __name__ == "__main__":
