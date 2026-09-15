@@ -733,6 +733,50 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .fab:hover{background:#1d4fd1;}
 .fab[disabled]{opacity:.35;pointer-events:none;box-shadow:none;}
 
+/* ---------- reference doc floating tab ---------- */
+.doc-tab{
+  position:fixed;top:50%;right:0;z-index:40;
+  transform:translateY(-50%);
+  display:flex;align-items:center;gap:8px;
+  background:var(--card);color:var(--text);border:1px solid var(--border);border-right:none;
+  border-radius:10px 0 0 10px;
+  padding:12px 10px;cursor:pointer;
+  box-shadow:-2px 4px 14px rgba(0,0,0,.12);
+  writing-mode:vertical-rl;text-orientation:mixed;
+  font-size:.85rem;font-weight:600;letter-spacing:.02em;
+  transition:background-color .15s, border-color .15s, color .15s, right .2s ease;
+}
+.doc-tab:hover{color:var(--blue);border-color:var(--blue);}
+.doc-tab svg{transform:rotate(90deg);flex:none;}
+.doc-tab.hidden{right:-999px;}
+
+.doc-drawer{
+  position:fixed;top:0;right:0;height:100vh;width:min(480px, 100vw);
+  background:var(--card);border-left:1px solid var(--border);
+  box-shadow:-4px 0 24px rgba(0,0,0,.18);
+  z-index:55;
+  display:flex;flex-direction:column;
+  transform:translateX(100%);
+  transition:transform .22s ease;
+}
+.doc-drawer.show{transform:translateX(0);}
+.doc-drawer-head{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:14px 16px;border-bottom:1px solid var(--border);flex:none;
+}
+.doc-drawer-head h3{font-size:.95rem;}
+.doc-drawer-head .actions{display:flex;align-items:center;gap:6px;}
+.doc-drawer-head a.iconbtn{text-decoration:none;}
+.doc-drawer iframe{flex:1;width:100%;border:none;background:#fff;}
+.doc-drawer-backdrop{
+  position:fixed;inset:0;background:rgba(10,12,16,.4);z-index:54;
+  opacity:0;pointer-events:none;transition:opacity .2s ease;
+}
+.doc-drawer-backdrop.show{opacity:1;pointer-events:auto;}
+@media (max-width:640px){
+  .doc-drawer{width:100vw;}
+}
+
 /* ---------- modals ---------- */
 .overlay{position:fixed;inset:0;background:rgba(10,12,16,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:20px;}
 .overlay.show{display:flex;}
@@ -841,6 +885,28 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
   Finish grading
 </button>
 
+<!-- floating reference doc tab -->
+<button class="doc-tab" id="doc-tab" title="Open reference doc">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+  Reference doc
+</button>
+
+<div class="doc-drawer-backdrop" id="doc-drawer-backdrop"></div>
+<div class="doc-drawer" id="doc-drawer">
+  <div class="doc-drawer-head">
+    <h3>Reference doc</h3>
+    <div class="actions">
+      <a class="iconbtn" id="doc-drawer-open" href="https://docs.google.com/document/d/1-7eOxE_8KYL_oKWcgIJEryZWyrHDVkxAsXq-dt0hSFg/edit?usp=sharing" target="_blank" rel="noopener" title="Open in new tab">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg>
+      </a>
+      <button class="iconbtn" id="doc-drawer-close" title="Close">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+  </div>
+  <iframe id="doc-drawer-frame" src="" loading="lazy" title="Reference document"></iframe>
+</div>
+
 <!-- modal: confirm finish -->
 <div class="overlay" id="ov-confirm">
   <div class="modal">
@@ -914,6 +980,30 @@ $('#theme-toggle').addEventListener('click', ()=>{
   applyTheme(current === 'dark' ? 'light' : 'dark');
 });
 applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
+
+/* ---------- reference doc drawer ---------- */
+const DOC_PREVIEW_URL = 'https://docs.google.com/document/d/1-7eOxE_8KYL_oKWcgIJEryZWyrHDVkxAsXq-dt0hSFg/preview';
+let docDrawerLoaded = false;
+function openDocDrawer(){
+  if(!docDrawerLoaded){
+    $('#doc-drawer-frame').src = DOC_PREVIEW_URL;
+    docDrawerLoaded = true;
+  }
+  $('#doc-drawer').classList.add('show');
+  $('#doc-drawer-backdrop').classList.add('show');
+  $('#doc-tab').classList.add('hidden');
+}
+function closeDocDrawer(){
+  $('#doc-drawer').classList.remove('show');
+  $('#doc-drawer-backdrop').classList.remove('show');
+  $('#doc-tab').classList.remove('hidden');
+}
+$('#doc-tab').addEventListener('click', openDocDrawer);
+$('#doc-drawer-close').addEventListener('click', closeDocDrawer);
+$('#doc-drawer-backdrop').addEventListener('click', closeDocDrawer);
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape' && $('#doc-drawer').classList.contains('show')) closeDocDrawer();
+});
 
 async function apiGet(url){
   const r = await fetch(url);
