@@ -717,6 +717,7 @@ INDEX_HTML = """<!DOCTYPE html>
   --toast-text:#ffffff;
   --wrong-answer-bg:#ffffff;
   --radius:10px;
+  --shadow:0 1px 2px rgba(16,24,40,.04), 0 1px 8px rgba(16,24,40,.05);
 }
 [data-theme="dark"]{
   --bg:#0b0d12;
@@ -734,6 +735,7 @@ INDEX_HTML = """<!DOCTYPE html>
   --toast-bg:#e7e9ee;
   --toast-text:#12151c;
   --wrong-answer-bg:#1a1f2b;
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
@@ -782,7 +784,7 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .grid{display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start;}
 @media (max-width:820px){.grid{grid-template-columns:1fr;}}
 
-.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;transition:background-color .15s, border-color .15s;}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);transition:background-color .15s, border-color .15s;}
 .panel h2{font-size:1rem;margin:0 0 14px;display:flex;justify-content:space-between;align-items:center;}
 .panel h2 .count{
   color:var(--text-dim);font-weight:500;font-size:.85rem;background:var(--bg);
@@ -794,11 +796,37 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
   border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:8px;
   cursor:pointer;transition:border-color .15s, background .15s;
 }
-.pending-item:hover{border-color:var(--blue);background:var(--blue-dim);}
-.pending-item.active{border-color:var(--blue);background:var(--blue-dim);}
+.pending-item:hover{border-color:var(--blue);background:var(--blue-dim);transform:translateY(-1px);}
+.pending-item.active{border-color:var(--blue);background:var(--blue-dim);box-shadow:0 0 0 1px var(--blue) inset;}
 .pending-item .u{color:var(--text);font-weight:600;}
 .pending-item .t{color:var(--text-dim);font-size:.82rem;margin-top:2px;}
+.pending-item:active{transform:scale(.99);}
 .empty-note{color:var(--text-dim);font-size:.9rem;line-height:1.5;}
+
+/* ---------- loading skeletons ---------- */
+@keyframes shimmer{0%{background-position:-220px 0;}100%{background-position:calc(220px + 100%) 0;}}
+.skeleton{
+  border-radius:8px;height:50px;margin-bottom:8px;
+  background:linear-gradient(90deg, var(--bg) 0px, var(--border) 60px, var(--bg) 120px);
+  background-size:220px 100%;animation:shimmer 1.3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce){.skeleton{animation:none;opacity:.6;}}
+
+/* ---------- entrance animation for list rows ---------- */
+@keyframes itemIn{from{opacity:0;transform:translateY(3px);}to{opacity:1;transform:translateY(0);}}
+.pending-item,.recent-item{animation:itemIn .16s ease both;}
+
+/* ---------- small status affordances ---------- */
+.unsaved-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);display:inline-block;margin-left:7px;vertical-align:middle;}
+.wrong-count{font-size:.8rem;color:var(--text-dim);font-weight:600;white-space:nowrap;}
+.wrong-count.has-wrong{color:var(--red);}
+.toast.error{background:var(--red);color:#fff;}
+.toast.success{background:var(--green);color:#fff;}
+.kbd{
+  display:inline-block;min-width:16px;text-align:center;font-size:.72rem;font-weight:600;
+  border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 4px;
+  color:var(--text-dim);background:var(--bg);font-family:inherit;
+}
 
 /* ---------- grading panel ---------- */
 .grading-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;flex-wrap:wrap;}
@@ -806,6 +834,7 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .grading-head .t{color:var(--text-dim);font-size:.85rem;margin-top:3px;}
 .link-btn{background:none;border:none;color:var(--text-dim);text-decoration:underline;cursor:pointer;font-size:.85rem;padding:0;}
 .link-btn:hover{color:var(--red);}
+.link-btn.neutral:hover{color:var(--blue);}
 
 .qrow{
   border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px;
@@ -876,6 +905,14 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 }
 .fab:hover{background:#1d4fd1;}
 .fab[disabled]{opacity:.35;pointer-events:none;box-shadow:none;}
+.fab{bottom:max(24px, calc(env(safe-area-inset-bottom) + 12px));}
+
+@media (max-width:480px){
+  .app{padding-left:14px;padding-right:14px;padding-bottom:100px;}
+  .fab{right:16px;padding:12px 18px;font-size:.9rem;}
+  .doc-tab{padding:10px 7px;font-size:.78rem;}
+  header.top h1{font-size:1.15rem;}
+}
 
 /* ---------- reference doc floating tab ---------- */
 .doc-tab{
@@ -1028,10 +1065,14 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
             <div class="u" id="g-username"></div>
             <div class="t" id="g-submitted"></div>
           </div>
-          <button class="link-btn" id="discard-btn">Discard without grading</button>
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            <span class="wrong-count" id="wrong-count">0 marked wrong</span>
+            <button class="link-btn neutral" id="clear-marks-btn" title="Unmark every question in this exam">Clear marks</button>
+            <button class="link-btn" id="discard-btn">Discard without grading</button>
+          </div>
         </div>
         <div id="questions"></div>
-        <div class="hint">Tap a question to mark it as wrong. Questions you don't tap are considered correct.</div>
+        <div class="hint">Tap a question to mark it as wrong · press <span class="kbd">1</span>–<span class="kbd">9</span> to toggle · questions you don't mark are considered correct.</div>
       </div>
     </div>
   </div>
@@ -1101,6 +1142,18 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
   </div>
 </div>
 
+<!-- modal: generic reusable confirm (discard, delete, switch-with-unsaved-changes) -->
+<div class="overlay" id="ov-generic-confirm">
+  <div class="modal">
+    <h3 id="gc-title">Are you sure?</h3>
+    <p id="gc-body"></p>
+    <div class="row">
+      <button class="btn ghost" id="gc-cancel-btn" data-close="ov-generic-confirm">Cancel</button>
+      <button class="btn red" id="gc-confirm-btn">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <!-- modal: pass / fail -->
 <div class="overlay" id="ov-result">
   <div class="modal">
@@ -1151,17 +1204,39 @@ function $(sel){return document.querySelector(sel);}
 function $$(sel){return Array.from(document.querySelectorAll(sel));}
 function el(html){const t=document.createElement('template');t.innerHTML=html.trim();return t.content.firstChild;}
 
-function toast(msg){
+function toast(msg, type){
   const t = $('#toast');
+  clearTimeout(t._hideTimer);
   t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), 2200);
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  t._hideTimer = setTimeout(()=>t.classList.remove('show'), 2400);
 }
 
 function openModal(id){ $('#'+id).classList.add('show'); }
 function closeModal(id){ $('#'+id).classList.remove('show'); }
 document.querySelectorAll('[data-close]').forEach(b=>{
   b.addEventListener('click', ()=>closeModal(b.dataset.close));
+});
+
+/* ---------- generic confirm dialog (promise-based, replaces native confirm()) ---------- */
+let _confirmResolve = null;
+function confirmDialog(title, body, confirmLabel, tone){
+  return new Promise(resolve=>{
+    $('#gc-title').textContent = title;
+    $('#gc-body').textContent = body;
+    const btn = $('#gc-confirm-btn');
+    btn.textContent = confirmLabel || 'Confirm';
+    btn.className = 'btn ' + (tone || 'red');
+    _confirmResolve = resolve;
+    openModal('ov-generic-confirm');
+  });
+}
+$('#gc-confirm-btn').addEventListener('click', ()=>{
+  closeModal('ov-generic-confirm');
+  if(_confirmResolve){ _confirmResolve(true); _confirmResolve = null; }
+});
+$('#gc-cancel-btn').addEventListener('click', ()=>{
+  if(_confirmResolve){ _confirmResolve(false); _confirmResolve = null; }
 });
 
 /* ---------- theme toggle ---------- */
@@ -1198,7 +1273,23 @@ $('#doc-tab').addEventListener('click', openDocDrawer);
 $('#doc-drawer-close').addEventListener('click', closeDocDrawer);
 $('#doc-drawer-backdrop').addEventListener('click', closeDocDrawer);
 document.addEventListener('keydown', (e)=>{
-  if(e.key === 'Escape' && $('#doc-drawer').classList.contains('show')) closeDocDrawer();
+  if(e.key === 'Escape'){
+    if($('#doc-drawer').classList.contains('show')){ closeDocDrawer(); return; }
+    const openOverlay = $$('.overlay.show')[0];
+    if(openOverlay){ closeModal(openOverlay.id); return; }
+    return;
+  }
+  // Number-key shortcuts to mark questions wrong while grading — skip while
+  // typing in a field or while any modal/drawer is open.
+  if(!currentResponse) return;
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if(tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if($$('.overlay.show').length || $('#doc-drawer').classList.contains('show')) return;
+  if(e.key >= '1' && e.key <= '9'){
+    const rows = $$('.qrow');
+    const row = rows[parseInt(e.key, 10) - 1];
+    if(row) row.click();
+  }
 });
 
 async function apiGet(url){
@@ -1222,11 +1313,25 @@ function timeAgo(iso){
   return `${h}h ${mins%60}min ago`;
 }
 
+let pendingInitialLoad = true;
 async function loadPending(){
-  const data = await apiGet('/api/pending');
   const list = $('#pending-list');
   const errBox = $('#pending-error');
   const emptyBox = $('#pending-empty');
+  if(pendingInitialLoad){
+    list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
+    emptyBox.style.display = 'none';
+  }
+  let data;
+  try{
+    data = await apiGet('/api/pending');
+  }catch(e){
+    if(e.message === 'auth') return;
+    errBox.style.display='block';
+    errBox.textContent = "Couldn't reach the server — retrying shortly.";
+    return;
+  }
+  pendingInitialLoad = false;
   list.innerHTML = '';
   if(data.error){
     errBox.style.display='block'; errBox.textContent = data.error;
@@ -1250,9 +1355,29 @@ async function loadPending(){
   });
 }
 
+function hasUnsavedMarks(){
+  return !!currentResponse && wrongIds.size > 0;
+}
+
 async function selectResponse(rid){
-  const data = await apiGet('/api/response/'+encodeURIComponent(rid));
-  if(data.error){ toast(data.error); return; }
+  if(currentResponse && currentResponse.response_id === rid) return;
+  if(hasUnsavedMarks()){
+    const ok = await confirmDialog(
+      'Switch exams?',
+      `You've marked ${wrongIds.size} question${wrongIds.size===1?'':'s'} wrong for ${currentResponse.username} that hasn't been saved yet. Switching now will discard those marks.`,
+      'Switch anyway', 'red'
+    );
+    if(!ok) return;
+  }
+  let data;
+  try{
+    data = await apiGet('/api/response/'+encodeURIComponent(rid));
+  }catch(e){
+    if(e.message === 'auth') return;
+    toast("Couldn't load that exam — check your connection.", 'error');
+    return;
+  }
+  if(data.error){ toast(data.error, 'error'); return; }
   currentResponse = data;
   wrongIds = new Set();
   renderGrading();
@@ -1265,6 +1390,7 @@ function renderGrading(){
   $('#grading-body').style.display='block';
   $('#g-username').textContent = currentResponse.username;
   $('#g-submitted').textContent = 'Submitted ' + timeAgo(currentResponse.submitted_at);
+  updateWrongCount();
   const box = $('#questions');
   box.innerHTML='';
   currentResponse.questions.forEach((q, idx)=>{
@@ -1330,26 +1456,43 @@ function renderGrading(){
     baseSaveBtn.addEventListener('click', async (e)=>{
       e.stopPropagation();
       const val = baseInput.value;
-      if(val === ''){ toast('Enter a point value first'); return; }
+      if(val === ''){ toast('Enter a point value first', 'error'); return; }
       const newPoints = parseInt(val, 10);
-      if(isNaN(newPoints) || newPoints < 0){ toast('Points must be 0 or more'); return; }
+      if(isNaN(newPoints) || newPoints < 0){ toast('Points must be 0 or more', 'error'); return; }
       const res = await apiPost('/api/set_points', {question_id: q.id, points: newPoints});
-      if(res.error){ toast(res.error); return; }
+      if(res.error){ toast(res.error, 'error'); return; }
       q.points = newPoints;
       baseValueSpan.textContent = newPoints;
       baseInput.style.display = 'none';
       baseSaveBtn.style.display = 'none';
       baseView.style.display = 'inline';
       baseEditBtn.style.display = 'inline-flex';
-      toast('Point value saved to the Form');
+      toast('Point value saved to the Form', 'success');
     });
     row.addEventListener('click', ()=>{
       if(wrongIds.has(q.id)){ wrongIds.delete(q.id); row.classList.remove('wrong'); }
       else { wrongIds.add(q.id); row.classList.add('wrong'); }
+      updateWrongCount();
     });
     box.appendChild(row);
   });
 }
+
+function updateWrongCount(){
+  const badge = $('#wrong-count');
+  if(!badge) return;
+  const n = wrongIds.size;
+  badge.textContent = n + (n === 1 ? ' marked wrong' : ' marked wrong');
+  badge.classList.toggle('has-wrong', n > 0);
+}
+
+$('#clear-marks-btn').addEventListener('click', ()=>{
+  if(wrongIds.size === 0) return;
+  wrongIds.clear();
+  $$('.qrow.wrong').forEach(r=>r.classList.remove('wrong'));
+  updateWrongCount();
+  toast('Cleared all marks for this exam');
+});
 
 function openFormView(q){
   $('#fv-title').textContent = q.title;
@@ -1381,6 +1524,13 @@ function openFormView(q){
   openModal('ov-formview');
 }
 
+window.addEventListener('beforeunload', (e)=>{
+  if(hasUnsavedMarks()){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
 function resetGradingPanel(){
   currentResponse = null;
   wrongIds = new Set();
@@ -1399,9 +1549,13 @@ $('#confirm-yes').addEventListener('click', ()=>{
   openModal('ov-result');
 });
 
+let submittingGrade = false;
 async function submitGrade(result){
+  if(submittingGrade) return;
+  submittingGrade = true;
   closeModal('ov-result');
-  const wrongTitles = currentResponse.questions
+  const savedResponse = currentResponse;
+  const wrongTitles = savedResponse.questions
     .filter(q=>wrongIds.has(q.id))
     .map(q=>q.title);
   const pointsAssigned = {};
@@ -1410,27 +1564,37 @@ async function submitGrade(result){
     const input = row.querySelector('.points-input');
     if(input && input.value !== '') pointsAssigned[qid] = parseInt(input.value, 10);
   });
-  const data = await apiPost('/api/grade', {
-    response_id: currentResponse.response_id,
-    username: currentResponse.username,
-    wrong_questions: wrongTitles,
-    points_assigned: pointsAssigned,
-    result
-  });
-  if(data.error){ toast(data.error); return; }
-  $('#msg-title').textContent = result==='fail' ? 'Exam failed' : 'Exam passed';
-  $('#msg-text').value = data.message;
-  openModal('ov-message');
-  resetGradingPanel();
-  loadPending();
-  loadRecent();
+  try{
+    const data = await apiPost('/api/grade', {
+      response_id: savedResponse.response_id,
+      username: savedResponse.username,
+      wrong_questions: wrongTitles,
+      points_assigned: pointsAssigned,
+      result
+    });
+    if(data.error){ toast(data.error, 'error'); return; }
+    $('#msg-title').textContent = result==='fail' ? 'Exam failed' : 'Exam passed';
+    $('#msg-text').value = data.message;
+    openModal('ov-message');
+    resetGradingPanel();
+    loadPending();
+    loadRecent();
+  }catch(e){
+    if(e.message !== 'auth') toast("Couldn't save the grade — check your connection and try again.", 'error');
+  }finally{
+    submittingGrade = false;
+  }
 }
 $('#result-fail').addEventListener('click', ()=>submitGrade('fail'));
 $('#result-pass').addEventListener('click', ()=>submitGrade('pass'));
 
 $('#msg-copy').addEventListener('click', async ()=>{
-  await navigator.clipboard.writeText($('#msg-text').value);
-  toast('Message copied to clipboard');
+  try{
+    await navigator.clipboard.writeText($('#msg-text').value);
+    toast('Message copied to clipboard', 'success');
+  }catch(e){
+    toast("Couldn't copy — select the text and copy manually.", 'error');
+  }
 });
 $('#msg-download').addEventListener('click', ()=>{
   const result = $('#msg-title').textContent.includes('failed') ? 'formatfailed' : 'formatpassed';
@@ -1443,15 +1607,37 @@ $('#msg-download').addEventListener('click', ()=>{
 
 $('#discard-btn').addEventListener('click', async ()=>{
   if(!currentResponse) return;
-  if(!confirm('Delete this exam without grading it? It cannot be graded later.')) return;
-  await apiPost('/api/delete', {response_id: currentResponse.response_id, username: currentResponse.username});
-  resetGradingPanel();
-  loadPending();
+  const target = currentResponse;
+  const ok = await confirmDialog(
+    'Discard without grading?',
+    `${target.username}'s exam will be removed from the pending list and can't be graded later.`,
+    'Discard', 'red'
+  );
+  if(!ok) return;
+  try{
+    await apiPost('/api/delete', {response_id: target.response_id, username: target.username});
+    resetGradingPanel();
+    loadPending();
+    toast('Exam discarded', 'success');
+  }catch(e){
+    if(e.message !== 'auth') toast("Couldn't discard the exam — check your connection.", 'error');
+  }
 });
 
+let recentInitialLoad = true;
 async function loadRecent(){
-  const data = await apiGet('/api/recent');
   const list = $('#recent-list');
+  if(recentInitialLoad){
+    list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
+    $('#recent-empty').style.display = 'none';
+  }
+  let data;
+  try{
+    data = await apiGet('/api/recent');
+  }catch(e){
+    return; // silent — this list is non-critical and will retry on the next poll
+  }
+  recentInitialLoad = false;
   list.innerHTML='';
   const items = data.recent || [];
   $('#recent-count').textContent = items.length;
@@ -1480,8 +1666,19 @@ async function loadRecent(){
       openModal('ov-message');
     });
     row.querySelector('[data-act="del"]').addEventListener('click', async ()=>{
-      await apiPost('/api/delete', {response_id: r.response_id});
-      loadRecent();
+      const ok = await confirmDialog(
+        'Delete this record?',
+        `This removes ${r.username}'s graded record from the recently graded list.`,
+        'Delete', 'red'
+      );
+      if(!ok) return;
+      try{
+        await apiPost('/api/delete', {response_id: r.response_id});
+        loadRecent();
+        toast('Record deleted', 'success');
+      }catch(e){
+        if(e.message !== 'auth') toast("Couldn't delete — check your connection.", 'error');
+      }
     });
     list.appendChild(row);
   });
