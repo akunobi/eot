@@ -41,6 +41,7 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 # to build the default redirect URI instead of localhost.
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
 IS_RENDER = bool(os.environ.get("RENDER")) or bool(RENDER_EXTERNAL_URL)
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
