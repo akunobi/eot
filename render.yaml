@@ -1,0 +1,41 @@
+# Blueprint de Render para "SD EOT Exam — Corrector".
+#
+# Uso: sube este repo a GitHub y en Render elige "New +" → "Blueprint",
+# apuntando a este repo. Render leerá este archivo y creará el servicio.
+#
+# Usa un plan de pago ("starter") porque el disco persistente (donde vive
+# eot_ledger.db) NO está disponible en el plan gratuito de Render. Si
+# prefieres probar gratis primero, borra el bloque "disk" y cambia
+# "plan: starter" por "plan: free" — pero ten en cuenta que entonces el
+# registro de exámenes corregidos se borrará cada vez que la instancia se
+# reinicie o se "duerma" por inactividad (ver README).
+services:
+  - type: web
+    name: sd-eot-exam
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 --threads 4 --timeout 120 app:app
+    healthCheckPath: /
+    disk:
+      name: eot-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: GOOGLE_CLIENT_ID
+        sync: false # pégalo a mano en el dashboard (secreto)
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false # pégalo a mano en el dashboard (secreto)
+      - key: ADMIN_EMAIL
+        sync: false # tu correo de Google, el único autorizado a entrar
+      - key: FORM_TITLE
+        value: "SD EOT Exam"
+      - key: FLASK_SECRET_KEY
+        generateValue: true # Render genera un valor aleatorio fijo y estable
+      - key: DB_PATH
+        value: /var/data/eot_ledger.db
+      # GOOGLE_REDIRECT_URI no hace falta definirla: app.py la calcula sola
+      # a partir de RENDER_EXTERNAL_URL (que Render define automáticamente).
+      # Solo defínela a mano si quieres forzar un valor distinto.
