@@ -45,7 +45,7 @@ IS_RENDER = bool(os.environ.get("RENDER")) or bool(RENDER_EXTERNAL_URL)
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 _default_redirect_uri = (
-    f"{RENDER_EXTERNAL_URL}/oauth2callback" if RENDER_EXTERNAL_URL else "http://localhost:5000/oauth2callback"
+    "https://eot.devs.surf/oauth2callback" if IS_RENDER else "http://localhost:5000/oauth2callback"
 )
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", _default_redirect_uri)
 FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))
@@ -234,7 +234,7 @@ def login():
     auth_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
-        prompt="consent",
+        prompt="select_account consent",
     )
     # PKCE: el verificador lo genera esta instancia de Flow y hace falta
     # reutilizarlo en /oauth2callback (que crea otra instancia), así que
