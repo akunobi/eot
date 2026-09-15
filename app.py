@@ -65,7 +65,7 @@ SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/drive.metadata.readonly",
-    "https://www.googleapis.com/auth/forms.body.readonly",
+    "https://www.googleapis.com/auth/forms.body",
     "https://www.googleapis.com/auth/forms.responses.readonly",
 ]
 
@@ -350,7 +350,7 @@ def question_map(form):
         qmap[qid] = title
         order.append(qid)
 
-        meta = {"type": None, "options": [], "correct": None}
+        meta = {"type": None, "options": [], "correct": None, "points": None}
         choice = q.get("choiceQuestion")
         if choice:
             meta["type"] = choice.get("type")  # RADIO | CHECKBOX | DROP_DOWN
@@ -359,8 +359,19 @@ def question_map(form):
         correct_answers = grading.get("correctAnswers")
         if correct_answers:
             meta["correct"] = [a.get("value", "") for a in correct_answers.get("answers", []) if a.get("value")]
+        if "pointValue" in grading:
+            meta["points"] = grading.get("pointValue")
         qmeta[qid] = meta
     return qmap, order, qmeta
+
+
+def find_item_by_question_id(form, question_id):
+    """Returns (item_index, item_dict) for the item holding this questionId, or (None, None)."""
+    for idx, item in enumerate(form.get("items", [])):
+        qi = item.get("questionItem")
+        if qi and qi.get("question", {}).get("questionId") == question_id:
+            return idx, item
+    return None, None
 
 
 def extract_answer_text(answer):
@@ -486,6 +497,7 @@ def api_response_detail(response_id):
             "options": meta.get("options") or [],  # all options as they appear in the form
             "correct": meta.get("correct"),    # list of correct values, or None if not exposed
             "selected": extract_answer_list(raw_answer),  # raw selected values
+            "points": meta.get("points"),      # current point value in the form, or None
         })
 
     return jsonify({
@@ -495,6 +507,64 @@ def api_response_detail(response_id):
         "submitted_at": target.get("lastSubmittedTime") or target.get("createTime") or "",
         "questions": questions,
     })
+
+
+@app.route("/api/set_points", methods=["POST"])
+@login_required
+def api_set_points():
+    data = request.get_json(force=True, silent=True) or {}
+    question_id = data.get("question_id")
+    points = data.get("points")
+    if not question_id or points is None:
+        return jsonify({"error": "Missing question_id or points."}), 400
+    try:
+        points = int(points)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Points must be a whole number."}), 400
+    if points < 0:
+        return jsonify({"error": "Points can't be negative."}), 400
+
+    creds = request.google_creds
+    form_id = find_form_id(creds, FORM_TITLE)
+    if not form_id:
+        return jsonify({"error": f'Form "{FORM_TITLE}" not found.'}), 404
+
+    form = get_form(creds, form_id)
+    idx, item = find_item_by_question_id(form, question_id)
+    if item is None:
+        return jsonify({"error": "That question was not found in the form."}), 404
+
+    # Keep any existing grading fields (correctAnswers, whenRight/whenWrong)
+    # and only change the point value.
+    grading = dict(item["questionItem"]["question"].get("grading") or {})
+    grading["pointValue"] = points
+
+    update_body = {
+        "requests": [
+            {
+                "updateItem": {
+                    "item": {
+                        "questionItem": {
+                            "question": {
+                                "questionId": question_id,
+                                "grading": grading,
+                            }
+                        }
+                    },
+                    "location": {"index": idx},
+                    "updateMask": "questionItem.question.grading",
+                }
+            }
+        ]
+    }
+
+    try:
+        forms = build("forms", "v1", credentials=creds)
+        forms.forms().batchUpdate(formId=form_id, body=update_body).execute()
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"Could not update the form: {exc}"}), 500
+
+    return jsonify({"error": None, "points": points})
 
 
 @app.route("/api/grade", methods=["POST"])
@@ -726,6 +796,9 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .qrow .tag{font-size:.76rem;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:.03em;}
 .qrow .wrong-flag{display:none;font-size:.8rem;font-weight:600;color:var(--red);flex:none;}
 .qrow.wrong .wrong-flag{display:inline;}
+.points-edit{display:flex;align-items:center;gap:4px;}
+.points-input{width:48px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 6px;font-size:.8rem;}
+.points-save{padding:3px 6px;}
 
 .qsection{margin-bottom:10px;}
 .qsection:last-child{margin-bottom:0;}
@@ -1135,6 +1208,12 @@ function renderGrading(){
     const row = el(`<div class="qrow" data-id="${q.id}">
         <div class="qrow-head">
           <span class="tag">Question ${idx+1}</span>
+          <div class="points-edit">
+            <input type="number" class="points-input" min="0" step="1" placeholder="pts" value="${q.points != null ? q.points : ''}">
+            <button type="button" class="iconbtn points-save" title="Save point value to the form">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>
+            </button>
+          </div>
           <span class="wrong-flag">Wrong</span>
         </div>
         <div class="qsection q-question">
@@ -1159,6 +1238,20 @@ function renderGrading(){
         openFormView(q);
       });
     }
+    const pointsInput = row.querySelector('.points-input');
+    const pointsSaveBtn = row.querySelector('.points-save');
+    pointsInput.addEventListener('click', (e)=>e.stopPropagation());
+    pointsSaveBtn.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      const val = pointsInput.value;
+      if(val === ''){ toast('Enter a point value first'); return; }
+      const points = parseInt(val, 10);
+      if(isNaN(points) || points < 0){ toast('Points must be 0 or more'); return; }
+      const res = await apiPost('/api/set_points', {question_id: q.id, points});
+      if(res.error){ toast(res.error); return; }
+      q.points = points;
+      toast('Points saved to the form');
+    });
     row.addEventListener('click', ()=>{
       if(wrongIds.has(q.id)){ wrongIds.delete(q.id); row.classList.remove('wrong'); }
       else { wrongIds.add(q.id); row.classList.add('wrong'); }
