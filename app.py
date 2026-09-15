@@ -932,12 +932,37 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 }
 .toast.show{opacity:1;transform:translateY(0);}
 
-/* ---------- login ---------- */
-.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;text-align:center;padding:20px;}
-.login-wrap h1{font-size:1.5rem;}
-.login-wrap p{color:var(--text-dim);max-width:380px;font-size:.95rem;}
-.login-wrap a.btn{display:inline-block;text-decoration:none;flex:none;background:var(--blue);border-color:var(--blue);color:#fff;padding:12px 24px;}
-.login-wrap a.btn:hover{background:#1d4fd1;}
+/* ---------- home / sign-in ---------- */
+.home-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative;overflow:hidden;}
+.home-wrap::before{
+  content:"";position:absolute;inset:-25% -10% auto -10%;height:460px;
+  background:radial-gradient(circle at 28% 30%, var(--blue-dim), transparent 60%),
+             radial-gradient(circle at 76% 62%, var(--green-dim), transparent 55%);
+  filter:blur(6px);pointer-events:none;opacity:.9;
+}
+.home-card{
+  position:relative;z-index:1;width:100%;max-width:380px;text-align:center;
+  background:var(--card);border:1px solid var(--border);border-radius:18px;
+  padding:38px 30px 30px;box-shadow:0 20px 60px rgba(0,0,0,.12);
+}
+.home-badge{
+  width:52px;height:52px;border-radius:14px;margin:0 auto 18px;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--blue-dim);color:var(--blue);
+}
+.home-card h1{font-size:1.25rem;margin-bottom:8px;}
+.home-card p{color:var(--text-dim);font-size:.9rem;line-height:1.5;margin:0 0 26px;}
+.google-btn{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  width:100%;padding:12px 18px;border-radius:10px;border:1px solid var(--border);
+  background:var(--card);color:var(--text);font-weight:600;font-size:.92rem;
+  text-decoration:none;transition:.15s;
+}
+.google-btn:hover{border-color:var(--blue);box-shadow:0 4px 14px rgba(37,99,235,.18);transform:translateY(-1px);}
+.home-links{margin-top:22px;font-size:.8rem;color:var(--text-dim);}
+.home-links a{color:var(--text-dim);text-decoration:none;}
+.home-links a:hover{color:var(--blue);text-decoration:underline;}
+.home-links span{margin:0 6px;}
 </style>
 </head>
 <body>
@@ -994,10 +1019,23 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
   </div>
 </div>
 
-<div id="login-view" class="login-wrap" style="display:none;">
-  <h1>SD EOT Exam — Grader</h1>
-  <p>Sign in with the authorized Google account to find the form and grade pending attempts.</p>
-  <a class="btn" href="/login">Sign in with Google</a>
+<div id="login-view" class="home-wrap" style="display:none;">
+  <div class="home-card">
+    <div class="home-badge">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    </div>
+    <h1>SD EOT Exam — Grader</h1>
+    <p>Sign in with the authorized Google account to find the form and grade pending attempts.</p>
+    <a class="google-btn" href="/login">
+      <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 6.1 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 6.1 29.5 4 24 4c-7.6 0-14.1 4.3-17.4 10.7z"/><path fill="#4CAF50" d="M24 44c5.3 0 10.1-2 13.7-5.4l-6.3-5.3C29.4 34.9 26.8 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.6 5.1C9.6 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.2 5.7l6.3 5.3C39.7 37.5 44 31.3 44 24c0-1.3-.1-2.7-.4-3.5z"/></svg>
+      Sign in with Google
+    </a>
+    <div class="home-links">
+      <a href="/privacy">Privacy Policy</a>
+      <span>·</span>
+      <a href="/terms">Terms of Service</a>
+    </div>
+  </div>
 </div>
 
 <button class="fab" id="fab" disabled title="Finish grading">
@@ -1394,7 +1432,9 @@ $('#logout-btn').addEventListener('click', ()=>{ window.location.href='/logout';
 
 async function init(){
   try{
-    const me = await apiGet('/api/me');
+    const r = await fetch('/api/me');
+    if(r.status === 401) throw new Error('unauthenticated');
+    const me = await r.json();
     $('#app').style.display='block';
     $('#login-view').style.display='none';
     $('#acct-email').textContent = me.email;
@@ -1418,96 +1458,161 @@ init();
 def index():
     sid = request.cookies.get("sid")
     if not sid or sid not in SESSIONS:
-        return INDEX_HTML  # the JS detects a 401 on /api/me and shows the login view
+        return INDEX_HTML  # the JS shows the home/sign-in view when /api/me is unauthenticated
     return INDEX_HTML
 
 # --------------------------------------------------------------------------
 # Rutas de Políticas Legales (Cumplimiento de OAuth de Google)
 # --------------------------------------------------------------------------
 
+LEGAL_PAGE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>__TITLE__ - SD EOT Exam</title>
+<script>
+(function(){
+  try {
+    var stored = localStorage.getItem('eot-theme');
+    var theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', theme);
+  } catch (e) {}
+})();
+</script>
+<style>
+:root{
+  --bg:#f7f8fa; --card:#ffffff; --border:#e3e6ea; --text:#1f2430; --text-dim:#707685;
+  --blue:#2563eb; --radius:14px;
+}
+[data-theme="dark"]{
+  --bg:#12151c; --card:#1a1f2b; --border:#2b3140; --text:#e7e9ee; --text-dim:#96a0b3;
+  --blue:#5b93ff;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  line-height:1.6;
+}
+.legal-topbar{display:flex;align-items:center;justify-content:space-between;max-width:720px;margin:0 auto;padding:22px 20px 0;}
+.legal-topbar a{color:var(--text-dim);text-decoration:none;font-size:.85rem;font-weight:600;display:flex;align-items:center;gap:6px;}
+.legal-topbar a:hover{color:var(--blue);}
+.theme-toggle{background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text-dim);padding:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.theme-toggle:hover{border-color:var(--blue);color:var(--blue);}
+.theme-toggle .icon-moon{display:none;}
+[data-theme="dark"] .theme-toggle .icon-sun{display:none;}
+[data-theme="dark"] .theme-toggle .icon-moon{display:block;}
+.legal-wrap{max-width:720px;margin:0 auto;padding:28px 20px 70px;}
+.legal-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:38px 34px;}
+.legal-card h1{font-size:1.5rem;margin:0 0 6px;}
+.legal-updated{color:var(--text-dim);font-size:.82rem;margin:0 0 26px;}
+.legal-card h2{font-size:1.02rem;margin:28px 0 10px;padding-top:20px;border-top:1px solid var(--border);}
+.legal-card h2:first-of-type{border-top:none;padding-top:0;margin-top:0;}
+.legal-card p, .legal-card li{color:var(--text-dim);font-size:.92rem;}
+.legal-card ul{padding-left:20px;margin:8px 0;}
+.legal-card li{margin-bottom:4px;}
+.legal-card a{color:var(--blue);}
+.legal-card strong{color:var(--text);}
+.legal-card code{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.85em;}
+.legal-footer{display:flex;justify-content:center;gap:10px;margin-top:26px;font-size:.85rem;}
+.legal-footer a{color:var(--text-dim);text-decoration:none;padding:8px 14px;border:1px solid var(--border);border-radius:20px;transition:.15s;}
+.legal-footer a:hover{border-color:var(--blue);color:var(--blue);}
+</style>
+</head>
+<body>
+<div class="legal-topbar">
+  <a href="/">&larr; Back to SD EOT Exam</a>
+  <button class="theme-toggle" id="theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+    <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+</div>
+<div class="legal-wrap">
+  <div class="legal-card">
+    <h1>__TITLE__</h1>
+    <p class="legal-updated">Last updated: __UPDATED__</p>
+    __BODY__
+  </div>
+  <div class="legal-footer">
+    <a href="/">Home</a>
+    <a href="/privacy">Privacy Policy</a>
+    <a href="/terms">Terms of Service</a>
+  </div>
+</div>
+<script>
+document.getElementById('theme-toggle').addEventListener('click', function(){
+  var current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  var next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try{ localStorage.setItem('eot-theme', next); }catch(e){}
+});
+</script>
+</body>
+</html>"""
+
+
+def render_legal_page(title, updated, body_html):
+    return (
+        LEGAL_PAGE_TEMPLATE
+        .replace("__TITLE__", title)
+        .replace("__UPDATED__", updated)
+        .replace("__BODY__", body_html)
+    )
+
+
 @app.route("/privacy")
 def privacy():
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Privacy Policy - SD EOT Exam</title>
-    </head>
-    <body style="font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6;">
-        <h1>Privacy Policy</h1>
-        <p><em>Last updated: September 15, 2026</em></p>
+    body = """
+    <p><strong>SD EOT Exam</strong> ("the Application", "we") respects your privacy. This Privacy Policy explains how information is handled when using our web service (<code>https://eot.devs.surf</code>).</p>
 
-        <p><strong>SD EOT Exam</strong> ("the Application", "we") respects your privacy. This Privacy Policy explains how information is handled when using our web service (<code>https://eot.devs.surf</code>).</p>
+    <h2>1. Information Accessed</h2>
+    <p>When authenticating through Google OAuth, the Application requests permissions to access:</p>
+    <ul>
+        <li><strong>Google Account Email:</strong> Used exclusively to authenticate authorized application managers.</li>
+        <li><strong>Google Forms & Drive Metadata:</strong> Used to fetch student submissions from linked Google Forms for automatic response evaluation, and to update a question's point value in the form when an administrator edits it within the app.</li>
+    </ul>
 
-        <h2>1. Information Accessed</h2>
-        <p>When authenticating through Google OAuth, the Application requests permissions to access:</p>
-        <ul>
-            <li><strong>Google Account Email:</strong> Used exclusively to authenticate authorized application managers.</li>
-            <li><strong>Google Forms & Drive Metadata:</strong> Used strictly to fetch student submissions from linked Google Forms for automatic response evaluation.</li>
-        </ul>
+    <h2>2. Data Usage & Sharing</h2>
+    <p>Accessed data is processed only to evaluate exam answers, flag incorrect questions, generate text feedback for applicants, and update point values on the linked form. We do not sell, rent, or share user data with any third parties.</p>
 
-        <h2>2. Data Usage & Sharing</h2>
-        <p>Accessed data is processed only to evaluate exam answers, flag incorrect questions, and generate text feedback for applicants. We do not sell, rent, or share user data with any third parties.</p>
+    <h2>3. Google API Limited Use Disclosure</h2>
+    <p>SD EOT Exam's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
 
-        <h2>3. Google API Limited Use Disclosure</h2>
-        <p>SD EOT Exam's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+    <h2>4. Data Retention</h2>
+    <p>Grading logs (user identifier, pass/fail state, and wrong question titles) are saved locally within a restricted database. Raw Google Form files are never duplicated or permanently stored on our servers.</p>
 
-        <h2>4. Data Retention</h2>
-        <p>Grading logs (user identifier, pass/fail state, and wrong question titles) are saved locally within a restricted database. Raw Google Form files are never duplicated or permanently stored on our servers.</p>
-
-        <h2>5. Contact Us</h2>
-        <p>If you have any questions regarding this Privacy Policy or data processing, please contact the developer at: <strong>bankainobi@gmail.com</strong>.</p>
-
-        <hr style="margin-top: 30px;">
-        <footer>
-            <a href="/">Home</a> | <a href="/terms">Terms of Service</a>
-        </footer>
-    </body>
-    </html>
+    <h2>5. Contact Us</h2>
+    <p>If you have any questions regarding this Privacy Policy or data processing, please contact the developer at: <strong>bankainobi@gmail.com</strong>.</p>
     """
+    return render_legal_page("Privacy Policy", "September 15, 2026", body)
 
 
 @app.route("/terms")
 def terms():
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Terms of Service - SD EOT Exam</title>
-    </head>
-    <body style="font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6;">
-        <h1>Terms of Service</h1>
-        <p><em>Last updated: September 15, 2026</em></p>
+    body = """
+    <p>By accessing or using <strong>SD EOT Exam</strong> (<code>https://eot.devs.surf</code>), you agree to be bound by these Terms of Service. If you do not agree, please do not use the application.</p>
 
-        <p>By accessing or using <strong>SD EOT Exam</strong> (<code>https://eot.devs.surf</code>), you agree to be bound by these Terms of Service. If you do not agree, please do not use the application.</p>
+    <h2>1. Service Description</h2>
+    <p>SD EOT Exam is an automated grading and feedback utility designed to review student submissions from authorized Google Forms.</p>
 
-        <h2>1. Service Description</h2>
-        <p>SD EOT Exam is an automated grading and feedback utility designed to review student submissions from authorized Google Forms.</p>
+    <h2>2. Authorized Access & Authentication</h2>
+    <p>Authentication is processed via Google OAuth. You are responsible for maintaining the security of your account credentials and ensuring you have legitimate authorization to access and edit linked exam forms.</p>
 
-        <h2>2. Authorized Access & Authentication</h2>
-        <p>Authentication is processed via Google OAuth. You are responsible for maintaining the security of your account credentials and ensuring you have legitimate authorization to access linked exam forms.</p>
+    <h2>3. Third-Party Integration Disclaimer</h2>
+    <p>This application integrates with services provided by Google LLC (Google Forms, Google Drive, and Google OAuth). SD EOT Exam is an independent tool and is not affiliated with, sponsored by, or endorsed by Google LLC.</p>
 
-        <h2>3. Third-Party Integration Disclaimer</h2>
-        <p>This application integrates with services provided by Google LLC (Google Forms, Google Drive, and Google OAuth). SD EOT Exam is an independent tool and is not affiliated with, sponsored by, or endorsed by Google LLC.</p>
+    <h2>4. Disclaimer of Warranties & Limitation of Liability</h2>
+    <p>The application is provided on an "AS IS" and "AS AVAILABLE" basis. The developer shall not be held liable for any indirect damages, grading errors, or service interruptions resulting from the use of this service.</p>
 
-        <h2>4. Disclaimer of Warranties & Limitation of Liability</h2>
-        <p>The application is provided on an "AS IS" and "AS AVAILABLE" basis. The developer shall not be held liable for any indirect damages, grading errors, or service interruptions resulting from the use of this service.</p>
+    <h2>5. Service Modifications</h2>
+    <p>We reserve the right to modify, suspend, or terminate access to the application at any time without prior notice.</p>
 
-        <h2>5. Service Modifications</h2>
-        <p>We reserve the right to modify, suspend, or terminate access to the application at any time without prior notice.</p>
-
-        <h2>6. Contact Information</h2>
-        <p>If you have any questions about these Terms of Service, please contact the developer at: <strong>bankainobi@gmail.com</strong>.</p>
-
-        <hr style="margin-top: 30px;">
-        <footer>
-            <a href="/">Home</a> | <a href="/privacy">Privacy Policy</a>
-        </footer>
-    </body>
-    </html>
+    <h2>6. Contact Information</h2>
+    <p>If you have any questions about these Terms of Service, please contact the developer at: <strong>bankainobi@gmail.com</strong>.</p>
     """
+    return render_legal_page("Terms of Service", "September 15, 2026", body)
 
 if __name__ == "__main__":
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not ADMIN_EMAIL:
