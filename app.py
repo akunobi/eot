@@ -1255,8 +1255,14 @@ def privacy():
         <h2>2. Data Usage & Sharing</h2>
         <p>Accessed data is processed only to evaluate exam answers, flag incorrect questions, and generate text feedback for applicants. We do not sell, rent, or share user data with any third parties.</p>
 
-        <h2>3. Data Retention</h2>
+        <h2>3. Google API Limited Use Disclosure</h2>
+        <p>SD EOT Exam's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+        <h2>4. Data Retention</h2>
         <p>Grading logs (user identifier, pass/fail state, and wrong question titles) are saved locally within a restricted database. Raw Google Form files are never duplicated or permanently stored on our servers.</p>
+
+        <h2>5. Contact Us</h2>
+        <p>If you have any questions regarding this Privacy Policy or data processing, please contact the developer at: <strong>bankainobi@gmail.com</strong>.</p>
 
         <hr style="margin-top: 30px;">
         <footer>
@@ -1280,16 +1286,25 @@ def terms():
         <h1>Terms of Service</h1>
         <p><em>Last updated: September 15, 2026</em></p>
 
-        <p>By accessing or using <strong>SD EOT Exam</strong> (<code>https://eot.devs.surf</code>), you agree to be bound by these Terms of Service.</p>
+        <p>By accessing or using <strong>SD EOT Exam</strong> (<code>https://eot.devs.surf</code>), you agree to be bound by these Terms of Service. If you do not agree, please do not use the application.</p>
 
-        <h2>1. Service Overview</h2>
-        <p>SD EOT Exam is an internal automated grading tool designed to review student form submissions and generate application results.</p>
+        <h2>1. Service Description</h2>
+        <p>SD EOT Exam is an automated grading and feedback utility designed to review student submissions from authorized Google Forms.</p>
 
-        <h2>2. Authorized Access</h2>
-        <p>Access is restricted to authorized administrators. Unauthorized attempts to manipulate grading services or access non-permitted scopes are prohibited.</p>
+        <h2>2. Authorized Access & Authentication</h2>
+        <p>Authentication is processed via Google OAuth. You are responsible for maintaining the security of your account credentials and ensuring you have legitimate authorization to access linked exam forms.</p>
 
-        <h2>3. Disclaimer</h2>
-        <p>The service is provided on an "AS IS" and "AS AVAILABLE" basis without warranties of any kind regarding continuous availability or accuracy.</p>
+        <h2>3. Third-Party Integration Disclaimer</h2>
+        <p>This application integrates with services provided by Google LLC (Google Forms, Google Drive, and Google OAuth). SD EOT Exam is an independent tool and is not affiliated with, sponsored by, or endorsed by Google LLC.</p>
+
+        <h2>4. Disclaimer of Warranties & Limitation of Liability</h2>
+        <p>The application is provided on an "AS IS" and "AS AVAILABLE" basis. The developer shall not be held liable for any indirect damages, grading errors, or service interruptions resulting from the use of this service.</p>
+
+        <h2>5. Service Modifications</h2>
+        <p>We reserve the right to modify, suspend, or terminate access to the application at any time without prior notice.</p>
+
+        <h2>6. Contact Information</h2>
+        <p>If you have any questions about these Terms of Service, please contact the developer at: <strong>bankainobi@gmail.com</strong>.</p>
 
         <hr style="margin-top: 30px;">
         <footer>
