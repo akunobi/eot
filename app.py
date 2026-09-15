@@ -1221,30 +1221,83 @@ init();
 
 @app.route("/")
 def index():
+    sid = request.cookies.get("sid")
+    if not sid or sid not in SESSIONS:
+        return INDEX_HTML  # the JS detects a 401 on /api/me and shows the login view
+    return INDEX_HTML
+
+# --------------------------------------------------------------------------
+# Rutas de Políticas Legales (Cumplimiento de OAuth de Google)
+# --------------------------------------------------------------------------
+
+@app.route("/privacy")
+def privacy():
     return """
     <!DOCTYPE html>
-    <html lang="es">
+    <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <!-- Etiqueta de verificación de Google Search Console -->
-        <meta name="google-site-verification" content="fVPStX8S1C6nbk4fDoFzFBf0Gosa5x1hszaeeMgIWRA" />
-        <title>SD EOT Exam Management Tool</title>
+        <title>Privacy Policy - SD EOT Exam</title>
     </head>
-    <body style="font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px;">
-        <h1>SD EOT Exam Management Tool</h1>
-        <p>
-          SD EOT Exam is an internal grading utility designed to process, review, 
-          and generate feedback for student submissions in linked Google Forms.
-        </p>
-        <p><a href="/login">Log in with Google</a></p>
-        <hr>
+    <body style="font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6;">
+        <h1>Privacy Policy</h1>
+        <p><em>Last updated: September 15, 2026</em></p>
+
+        <p><strong>SD EOT Exam</strong> ("the Application", "we") respects your privacy. This Privacy Policy explains how information is handled when using our web service (<code>https://eot.devs.surf</code>).</p>
+
+        <h2>1. Information Accessed</h2>
+        <p>When authenticating through Google OAuth, the Application requests permissions to access:</p>
+        <ul>
+            <li><strong>Google Account Email:</strong> Used exclusively to authenticate authorized application managers.</li>
+            <li><strong>Google Forms & Drive Metadata:</strong> Used strictly to fetch student submissions from linked Google Forms for automatic response evaluation.</li>
+        </ul>
+
+        <h2>2. Data Usage & Sharing</h2>
+        <p>Accessed data is processed only to evaluate exam answers, flag incorrect questions, and generate text feedback for applicants. We do not sell, rent, or share user data with any third parties.</p>
+
+        <h2>3. Data Retention</h2>
+        <p>Grading logs (user identifier, pass/fail state, and wrong question titles) are saved locally within a restricted database. Raw Google Form files are never duplicated or permanently stored on our servers.</p>
+
+        <hr style="margin-top: 30px;">
         <footer>
-          <a href="/privacy">Privacy Policy</a> | <a href="/terms">Terms of Service</a>
+            <a href="/">Home</a> | <a href="/terms">Terms of Service</a>
         </footer>
     </body>
     </html>
     """
 
+
+@app.route("/terms")
+def terms():
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Terms of Service - SD EOT Exam</title>
+    </head>
+    <body style="font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6;">
+        <h1>Terms of Service</h1>
+        <p><em>Last updated: September 15, 2026</em></p>
+
+        <p>By accessing or using <strong>SD EOT Exam</strong> (<code>https://eot.devs.surf</code>), you agree to be bound by these Terms of Service.</p>
+
+        <h2>1. Service Overview</h2>
+        <p>SD EOT Exam is an internal automated grading tool designed to review student form submissions and generate application results.</p>
+
+        <h2>2. Authorized Access</h2>
+        <p>Access is restricted to authorized administrators. Unauthorized attempts to manipulate grading services or access non-permitted scopes are prohibited.</p>
+
+        <h2>3. Disclaimer</h2>
+        <p>The service is provided on an "AS IS" and "AS AVAILABLE" basis without warranties of any kind regarding continuous availability or accuracy.</p>
+
+        <hr style="margin-top: 30px;">
+        <footer>
+            <a href="/">Home</a> | <a href="/privacy">Privacy Policy</a>
+        </footer>
+    </body>
+    </html>
+    """
 
 if __name__ == "__main__":
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not ADMIN_EMAIL:
