@@ -638,19 +638,26 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .link-btn:hover{color:var(--red);}
 
 .qrow{
-  border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:8px;
-  cursor:pointer;transition:.12s;position:relative;
+  border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px;
+  cursor:pointer;transition:.12s;
 }
-.qrow .tag{font-size:.78rem;color:var(--text-dim);}
-.qrow .qt{font-size:.95rem;margin:6px 0 6px;}
-.qrow .qa{font-size:.9rem;color:var(--text-dim);}
 .qrow:hover{border-color:var(--blue);}
 .qrow.wrong{border-color:var(--red);background:var(--red-dim);}
-.qrow.wrong .qa{color:var(--red);text-decoration:line-through;}
-.qrow.wrong::after{
-  content:'Fallada'; position:absolute; top:12px; right:14px; color:var(--red);
-  font-size:.8rem; font-weight:600;
-}
+
+.qrow-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;}
+.qrow .tag{font-size:.76rem;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:.03em;}
+.qrow .wrong-flag{display:none;font-size:.8rem;font-weight:600;color:var(--red);flex:none;}
+.qrow.wrong .wrong-flag{display:inline;}
+
+.qsection{margin-bottom:10px;}
+.qsection:last-child{margin-bottom:0;}
+.qsection-label{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);margin-bottom:4px;}
+.qsection-body{font-size:.95rem;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;}
+.q-question .qsection-body{color:var(--text);}
+.q-answer{padding:9px 12px;background:var(--bg);border-left:3px solid var(--border);border-radius:0 6px 6px 0;}
+.q-answer .qsection-body{color:var(--text-dim);}
+.qrow.wrong .q-answer{border-left-color:var(--red);background:#fff;}
+.qrow.wrong .q-answer .qsection-body{color:var(--red);text-decoration:line-through;}
 .hint{color:var(--text-dim);font-size:.85rem;margin-top:14px;}
 
 .placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:240px;color:var(--text-dim);text-align:center;gap:10px;}
@@ -913,9 +920,18 @@ function renderGrading(){
   box.innerHTML='';
   currentResponse.questions.forEach((q, idx)=>{
     const row = el(`<div class="qrow" data-id="${q.id}">
-        <div class="tag">Pregunta ${idx+1}</div>
-        <div class="qt"></div>
-        <div class="qa"></div>
+        <div class="qrow-head">
+          <span class="tag">Pregunta ${idx+1}</span>
+          <span class="wrong-flag">Fallada</span>
+        </div>
+        <div class="qsection q-question">
+          <div class="qsection-label">Pregunta</div>
+          <div class="qsection-body qt"></div>
+        </div>
+        <div class="qsection q-answer">
+          <div class="qsection-label">Respuesta</div>
+          <div class="qsection-body qa"></div>
+        </div>
       </div>`);
     row.querySelector('.qt').textContent = q.title;
     row.querySelector('.qa').textContent = q.answer;
