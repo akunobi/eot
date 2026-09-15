@@ -1,15 +1,15 @@
 """
-SD EOT Exam — Corrector
+SD EOT Exam — Grader
 ------------------------
-App Flask de un solo archivo, pensada para correr EN LOCAL (tu propio PC),
-no desplegada en ningún servicio en la nube. Corrige las respuestas del
-formulario de Google "SD EOT Exam": marca preguntas falladas, decide
-Aprobado/Suspendido y genera el mensaje final a partir de las plantillas
-formatpassed.txt / formatfailed.txt.
+Single-file Flask app, meant to run LOCALLY (on your own PC),
+not deployed to any cloud service. Grades the responses to the Google
+"SD EOT Exam" form: flags wrong questions, decides Pass/Fail, and
+generates the final message from the formatpassed.txt / formatfailed.txt
+templates.
 
-Configuración: pon tus datos en un archivo ".env" junto a este archivo
-(hay una plantilla en .env.example) o expórtalos como variables de entorno.
-Ver README.md para el paso a paso.
+Setup: put your credentials in a ".env" file next to this file
+(there's a template in .env.example) or export them as environment
+variables. See README.md for the step-by-step guide.
 """
 
 import os
@@ -33,12 +33,12 @@ from googleapiclient.discovery import build
 from google.auth.transport.requests import Request as GoogleAuthRequest
 
 # --------------------------------------------------------------------------
-# Configuración — todo pensado para localhost
+# Configuration — everything designed for localhost
 # --------------------------------------------------------------------------
 
-# Render define automáticamente RENDER_EXTERNAL_URL con la URL pública del
-# servicio (p. ej. "https://sd-eot-exam.onrender.com"). Si existe, la usamos
-# para construir la redirect URI por defecto en vez de localhost.
+# Render automatically sets RENDER_EXTERNAL_URL to the service's public
+# URL (e.g. "https://sd-eot-exam.onrender.com"). If it's set, we use it
+# to build the default redirect URI instead of localhost.
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
 IS_RENDER = bool(os.environ.get("RENDER")) or bool(RENDER_EXTERNAL_URL)
 
@@ -51,13 +51,13 @@ GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", _default_redirect_ur
 FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 FORM_TITLE = os.environ.get("FORM_TITLE", "SD EOT Exam")
-# Render inyecta PORT automáticamente y espera que el proceso escuche en 0.0.0.0.
+# Render injects PORT automatically and expects the process to listen on 0.0.0.0.
 HOST = os.environ.get("HOST", "0.0.0.0" if IS_RENDER else "127.0.0.1")
 PORT = int(os.environ.get("PORT", os.environ.get("LOCAL_PORT", "5000")))
 
-# El flujo OAuth exige HTTPS salvo que se marque explícitamente lo contrario.
-# Solo relajamos esto para desarrollo local por http://; en Render la URL
-# externa ya es https, así que esta rama no debería activarse ahí.
+# The OAuth flow requires HTTPS unless explicitly told otherwise.
+# We only relax this for local development over http://; on Render the
+# external URL is already https, so this branch shouldn't trigger there.
 if GOOGLE_REDIRECT_URI.startswith("http://"):
     os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
@@ -79,11 +79,11 @@ CLIENT_CONFIG = {
     }
 }
 
-# En Render, el filesystem es efímero salvo que adjuntes un "Persistent
-# Disk" (requiere un plan de pago) y montes DB_PATH dentro de él, p. ej.
-# DB_PATH=/var/data/eot_ledger.db con el disco montado en /var/data. Sin
-# disco persistente, este archivo se resetea en cada redeploy y cada vez
-# que la instancia gratuita se "duerme" y vuelve a arrancar.
+# On Render, the filesystem is ephemeral unless you attach a "Persistent
+# Disk" (requires a paid plan) and mount DB_PATH inside it, e.g.
+# DB_PATH=/var/data/eot_ledger.db with the disk mounted at /var/data.
+# Without a persistent disk, this file resets on every redeploy and every
+# time the free instance "sleeps" and spins back up.
 DB_PATH = os.environ.get(
     "DB_PATH",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "eot_ledger.db"),
@@ -92,23 +92,23 @@ os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
-# Render (y cualquier PaaS con proxy delante) termina el TLS y reenvía por
-# HTTP interno, añadiendo cabeceras X-Forwarded-*. Con ProxyFix, Flask sabe
-# que la petición original era https y request.is_secure se comporta bien
-# (importante para las cookies "secure" de abajo).
+# Render (and any PaaS with a proxy in front) terminates TLS and forwards
+# over internal HTTP, adding X-Forwarded-* headers. With ProxyFix, Flask
+# knows the original request was https and request.is_secure behaves
+# correctly (important for the "secure" cookies below).
 try:
     from werkzeug.middleware.proxy_fix import ProxyFix
     app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 except ImportError:
     pass
 
-# Sesiones en memoria del proceso: sid (cookie) -> {"credentials": Credentials, "email": str}
-# Sencillo a propósito: esta app la usa una sola persona.
+# In-process in-memory sessions: sid (cookie) -> {"credentials": Credentials, "email": str}
+# Deliberately simple: this app is used by a single person.
 SESSIONS = {}
 
 
 # --------------------------------------------------------------------------
-# Base de datos (ledger de exámenes ya procesados)
+# Database (ledger of already-processed exams)
 # --------------------------------------------------------------------------
 
 def get_db():
@@ -125,8 +125,8 @@ def init_db():
             response_id     TEXT PRIMARY KEY,
             username        TEXT,
             result          TEXT,      -- 'pass' | 'fail' | 'discarded'
-            wrong_questions TEXT,      -- JSON list de títulos de pregunta
-            message         TEXT,      -- texto final generado
+            wrong_questions TEXT,      -- JSON list of question titles
+            message         TEXT,      -- final generated text
             graded_at       TEXT,      -- ISO timestamp UTC
             archived        INTEGER DEFAULT 0
         )
@@ -148,8 +148,8 @@ def parse_iso(s):
 
 
 # --------------------------------------------------------------------------
-# Plantillas de mensaje (idénticas a formatfailed.txt / formatpassed.txt,
-# con {username} y {bullets} como marcadores)
+# Message templates (identical to formatfailed.txt / formatpassed.txt,
+# with {username} and {bullets} as placeholders)
 # --------------------------------------------------------------------------
 
 FAIL_TEMPLATE = """Greetings {username},
@@ -189,17 +189,17 @@ ogmhabas"""
 
 
 def build_message(result, username, wrong_questions):
-    username = username or "(usuario desconocido)"
+    username = username or "(unknown user)"
     if wrong_questions:
         bullets = "\n".join(f"- {q}" for q in wrong_questions)
     else:
-        bullets = "- (No se marcó ninguna pregunta como fallada)"
+        bullets = "- (No question was marked as wrong)"
     template = FAIL_TEMPLATE if result == "fail" else PASS_TEMPLATE
     return template.replace("{username}", username).replace("{bullets}", bullets)
 
 
 # --------------------------------------------------------------------------
-# Autenticación
+# Authentication
 # --------------------------------------------------------------------------
 
 def login_required(view):
@@ -229,16 +229,16 @@ def build_flow(code_verifier=None):
 @app.route("/login")
 def login():
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        return "Faltan GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET en las variables de entorno.", 500
+        return "Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET environment variables.", 500
     flow = build_flow()
     auth_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="select_account consent",
     )
-    # PKCE: el verificador lo genera esta instancia de Flow y hace falta
-    # reutilizarlo en /oauth2callback (que crea otra instancia), así que
-    # viaja en una cookie de corta duración junto al "state".
+    # PKCE: the verifier is generated by this Flow instance and needs to
+    # be reused in /oauth2callback (which creates another instance), so it
+    # travels in a short-lived cookie alongside the "state".
     resp = make_response(redirect(auth_url))
     resp.set_cookie("oauth_state", state, httponly=True, samesite="Lax", secure=request.is_secure, max_age=600)
     resp.set_cookie("oauth_cv", flow.code_verifier, httponly=True, samesite="Lax", secure=request.is_secure, max_age=600)
@@ -250,15 +250,15 @@ def oauth2callback():
     expected_state = request.cookies.get("oauth_state")
     code_verifier = request.cookies.get("oauth_cv")
     if not expected_state or request.args.get("state") != expected_state:
-        return "Estado de OAuth inválido, vuelve a intentarlo desde /login.", 400
+        return "Invalid OAuth state, please try again from /login.", 400
     if not code_verifier:
-        return "Falta el verificador de PKCE (cookie expirada), vuelve a intentarlo desde /login.", 400
+        return "Missing PKCE verifier (cookie expired), please try again from /login.", 400
 
     flow = build_flow(code_verifier=code_verifier)
     try:
         flow.fetch_token(authorization_response=request.url)
     except Exception as exc:  # noqa: BLE001
-        return f"No se pudo completar el inicio de sesión: {exc}", 400
+        return f"Could not complete sign-in: {exc}", 400
 
     creds = flow.credentials
     try:
@@ -266,10 +266,10 @@ def oauth2callback():
         userinfo = oauth2_service.userinfo().get().execute()
         email = userinfo.get("email", "")
     except Exception as exc:  # noqa: BLE001
-        return f"No se pudo verificar la cuenta de Google: {exc}", 400
+        return f"Could not verify the Google account: {exc}", 400
 
     if ADMIN_EMAIL and email.lower() != ADMIN_EMAIL.lower():
-        return f"La cuenta {email} no está autorizada a usar esta herramienta.", 403
+        return f"The account {email} is not authorized to use this tool.", 403
 
     sid = secrets.token_urlsafe(32)
     SESSIONS[sid] = {"credentials": creds, "email": email}
@@ -297,7 +297,7 @@ def api_me():
 
 
 # --------------------------------------------------------------------------
-# Ayudantes de Google Forms / Drive
+# Google Forms / Drive helpers
 # --------------------------------------------------------------------------
 
 def find_form_id(creds, title):
@@ -333,7 +333,7 @@ def list_all_responses(creds, form_id):
 
 
 def question_map(form):
-    """Devuelve (dict questionId -> título, lista ordenada de questionId)."""
+    """Returns (dict questionId -> title, ordered list of questionId)."""
     qmap = {}
     order = []
     for item in form.get("items", []):
@@ -344,7 +344,7 @@ def question_map(form):
         qid = q.get("questionId")
         if not qid:
             continue
-        title = item.get("title") or "(pregunta sin título)"
+        title = item.get("title") or "(untitled question)"
         qmap[qid] = title
         order.append(qid)
     return qmap, order
@@ -352,13 +352,13 @@ def question_map(form):
 
 def extract_answer_text(answer):
     if not answer:
-        return "(sin respuesta)"
+        return "(no answer)"
     text_answers = answer.get("textAnswers")
     if text_answers:
         values = [a.get("value", "") for a in text_answers.get("answers", [])]
         joined = ", ".join(v for v in values if v)
-        return joined or "(sin respuesta)"
-    return "(tipo de respuesta no soportado)"
+        return joined or "(no answer)"
+    return "(unsupported answer type)"
 
 
 USERNAME_HINT = re.compile(r"usuario|username|discord|roblox", re.IGNORECASE)
@@ -369,14 +369,14 @@ def detect_username(qmap, order, answers):
         title = qmap.get(qid, "")
         if USERNAME_HINT.search(title) and qid in answers:
             val = extract_answer_text(answers[qid])
-            if val and val != "(sin respuesta)":
+            if val and val != "(no answer)":
                 return val
     for qid in order:
         if qid in answers:
             val = extract_answer_text(answers[qid])
-            if val and val != "(sin respuesta)":
+            if val and val != "(no answer)":
                 return val
-    return "(usuario desconocido)"
+    return "(unknown user)"
 
 
 def graded_response_ids():
@@ -387,7 +387,7 @@ def graded_response_ids():
 
 
 # --------------------------------------------------------------------------
-# API: exámenes pendientes / detalle / calificar / eliminar / recientes
+# API: pending exams / detail / grade / delete / recent
 # --------------------------------------------------------------------------
 
 @app.route("/api/pending")
@@ -397,14 +397,14 @@ def api_pending():
     form_id = find_form_id(creds, FORM_TITLE)
     if not form_id:
         return jsonify({
-            "error": f'No se encontró un formulario de Google llamado "{FORM_TITLE}" al que tenga acceso esta cuenta.',
+            "error": f'No Google Form named "{FORM_TITLE}" was found that this account has access to.',
             "pending": [],
         }), 200
 
     try:
         responses = list_all_responses(creds, form_id)
     except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": f"No se pudieron leer las respuestas del formulario: {exc}", "pending": []}), 200
+        return jsonify({"error": f"Could not read the form's responses: {exc}", "pending": []}), 200
 
     form = get_form(creds, form_id)
     qmap, order = question_map(form)
@@ -430,7 +430,7 @@ def api_response_detail(response_id):
     creds = request.google_creds
     form_id = find_form_id(creds, FORM_TITLE)
     if not form_id:
-        return jsonify({"error": f'No se encontró el formulario "{FORM_TITLE}".'}), 404
+        return jsonify({"error": f'Form "{FORM_TITLE}" not found.'}), 404
 
     form = get_form(creds, form_id)
     qmap, order = question_map(form)
@@ -442,16 +442,16 @@ def api_response_detail(response_id):
 
     target = next((r for r in responses if r.get("responseId") == response_id), None)
     if not target:
-        return jsonify({"error": "No se encontró esa respuesta (puede que ya no exista)."}), 404
+        return jsonify({"error": "That response was not found (it may no longer exist)."}), 404
 
     answers = target.get("answers", {})
     username = detect_username(qmap, order, answers)
 
     questions = []
     for qid in order:
-        title = qmap.get(qid, "(pregunta sin título)")
+        title = qmap.get(qid, "(untitled question)")
         if USERNAME_HINT.search(title):
-            continue  # no mostramos la pregunta de identificación como pregunta a corregir
+            continue  # don't show the identification question as a question to grade
         answer_text = extract_answer_text(answers.get(qid))
         questions.append({"id": qid, "title": title, "answer": answer_text})
 
@@ -474,7 +474,7 @@ def api_grade():
     result = data.get("result")
 
     if not response_id or result not in ("pass", "fail"):
-        return jsonify({"error": "Datos incompletos."}), 400
+        return jsonify({"error": "Incomplete data."}), 400
 
     message = build_message(result, username, wrong_questions)
 
@@ -506,7 +506,7 @@ def api_delete():
     response_id = data.get("response_id")
     username = data.get("username", "")
     if not response_id:
-        return jsonify({"error": "Falta response_id."}), 400
+        return jsonify({"error": "Missing response_id."}), 400
 
     db = get_db()
     row = db.execute("SELECT response_id FROM ledger WHERE response_id = ?", (response_id,)).fetchone()
@@ -554,15 +554,26 @@ def api_recent():
 
 
 # --------------------------------------------------------------------------
-# Página principal (SPA de un solo archivo)
+# Main page (single-file SPA)
 # --------------------------------------------------------------------------
 
 INDEX_HTML = """<!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SD EOT Exam — Corrector</title>
+<meta name="theme-color" id="theme-color-meta" content="#f7f8fa">
+<title>SD EOT Exam — Grader</title>
+<script>
+// Applied before first paint to avoid a light/dark flash on load.
+(function(){
+  try {
+    var stored = localStorage.getItem('eot-theme');
+    var theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', theme);
+  } catch (e) {}
+})();
+</script>
 <style>
 :root{
   --bg:#f7f8fa;
@@ -577,7 +588,27 @@ INDEX_HTML = """<!DOCTYPE html>
   --red:#d63b3b;
   --red-dim:#fdecec;
   --amber:#b6650a;
+  --toast-bg:#1f2430;
+  --toast-text:#ffffff;
+  --wrong-answer-bg:#ffffff;
   --radius:10px;
+}
+[data-theme="dark"]{
+  --bg:#12151c;
+  --card:#1a1f2b;
+  --border:#2b3140;
+  --text:#e7e9ee;
+  --text-dim:#96a0b3;
+  --blue:#5b93ff;
+  --blue-dim:#1c2a47;
+  --green:#3ddc84;
+  --green-dim:#123524;
+  --red:#ff6b6b;
+  --red-dim:#3a1a1a;
+  --amber:#e0a458;
+  --toast-bg:#e7e9ee;
+  --toast-text:#12151c;
+  --wrong-answer-bg:#1a1f2b;
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
@@ -588,11 +619,25 @@ body{
   font-size:15px;
   line-height:1.5;
   min-height:100vh;
+  transition:background-color .15s ease, color .15s ease;
 }
 h1,h2,h3{margin:0;font-weight:600;}
 button,textarea{font-family:inherit;}
 :focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important;}}
+
+/* ---------- theme toggle ---------- */
+.theme-toggle{
+  position:fixed;top:18px;right:20px;z-index:70;
+  width:38px;height:38px;border-radius:50%;
+  background:var(--card);border:1px solid var(--border);color:var(--text);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:background-color .15s, border-color .15s, color .15s;
+}
+.theme-toggle:hover{border-color:var(--blue);color:var(--blue);}
+.theme-toggle .icon-moon{display:none;}
+[data-theme="dark"] .theme-toggle .icon-sun{display:none;}
+[data-theme="dark"] .theme-toggle .icon-moon{display:block;}
 
 /* ---------- layout ---------- */
 .app{max-width:1040px;margin:0 auto;padding:32px 20px 120px;}
@@ -612,14 +657,14 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .grid{display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start;}
 @media (max-width:820px){.grid{grid-template-columns:1fr;}}
 
-.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;transition:background-color .15s, border-color .15s;}
 .panel h2{font-size:1rem;margin:0 0 14px;display:flex;justify-content:space-between;align-items:center;}
 .panel h2 .count{
   color:var(--text-dim);font-weight:500;font-size:.85rem;background:var(--bg);
   border-radius:20px;padding:2px 10px;
 }
 
-/* ---------- lista pendientes ---------- */
+/* ---------- pending list ---------- */
 .pending-item{
   border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:8px;
   cursor:pointer;transition:border-color .15s, background .15s;
@@ -630,7 +675,7 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .pending-item .t{color:var(--text-dim);font-size:.82rem;margin-top:2px;}
 .empty-note{color:var(--text-dim);font-size:.9rem;line-height:1.5;}
 
-/* ---------- panel de corrección ---------- */
+/* ---------- grading panel ---------- */
 .grading-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;flex-wrap:wrap;}
 .grading-head .u{font-size:1.15rem;font-weight:600;}
 .grading-head .t{color:var(--text-dim);font-size:.85rem;margin-top:3px;}
@@ -656,14 +701,14 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .q-question .qsection-body{color:var(--text);}
 .q-answer{padding:9px 12px;background:var(--bg);border-left:3px solid var(--border);border-radius:0 6px 6px 0;}
 .q-answer .qsection-body{color:var(--text-dim);}
-.qrow.wrong .q-answer{border-left-color:var(--red);background:#fff;}
+.qrow.wrong .q-answer{border-left-color:var(--red);background:var(--wrong-answer-bg);}
 .qrow.wrong .q-answer .qsection-body{color:var(--red);text-decoration:line-through;}
 .hint{color:var(--text-dim);font-size:.85rem;margin-top:14px;}
 
 .placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:240px;color:var(--text-dim);text-align:center;gap:10px;}
 .placeholder svg{opacity:.5;}
 
-/* ---------- recientes ---------- */
+/* ---------- recent ---------- */
 .recent-item{
   display:flex;justify-content:space-between;align-items:center;gap:10px;
   border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:8px;flex-wrap:wrap;
@@ -676,7 +721,7 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .iconbtn{background:none;border:1px solid var(--border);border-radius:8px;color:var(--text-dim);padding:6px 9px;cursor:pointer;display:inline-flex;}
 .iconbtn:hover{border-color:var(--blue);color:var(--blue);}
 
-/* ---------- botón de finalizar ---------- */
+/* ---------- finish button ---------- */
 .fab{
   position:fixed;right:24px;bottom:24px;z-index:20;
   display:flex;align-items:center;gap:8px;
@@ -688,12 +733,12 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .fab:hover{background:#1d4fd1;}
 .fab[disabled]{opacity:.35;pointer-events:none;box-shadow:none;}
 
-/* ---------- modales ---------- */
-.overlay{position:fixed;inset:0;background:rgba(20,24,32,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:20px;}
+/* ---------- modals ---------- */
+.overlay{position:fixed;inset:0;background:rgba(10,12,16,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:20px;}
 .overlay.show{display:flex;}
 .modal{
   background:var(--card);border-radius:14px;max-width:440px;width:100%;padding:26px;
-  box-shadow:0 10px 40px rgba(0,0,0,.18);
+  box-shadow:0 10px 40px rgba(0,0,0,.25);
 }
 .modal h3{font-size:1.1rem;margin:0 0 10px;}
 .modal p{color:var(--text-dim);font-size:.92rem;line-height:1.5;margin:0;}
@@ -717,8 +762,8 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 }
 
 .toast{
-  position:fixed;left:24px;bottom:24px;z-index:60;background:var(--text);
-  color:#fff;border-radius:8px;padding:10px 16px;font-size:.88rem;opacity:0;transform:translateY(8px);
+  position:fixed;left:24px;bottom:24px;z-index:60;background:var(--toast-bg);
+  color:var(--toast-text);border-radius:8px;padding:10px 16px;font-size:.88rem;opacity:0;transform:translateY(8px);
   transition:.2s;pointer-events:none;
 }
 .toast.show{opacity:1;transform:translateY(0);}
@@ -733,30 +778,35 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 </head>
 <body>
 
+<button class="theme-toggle" id="theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+  <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+  <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+</button>
+
 <div id="app" class="app" style="display:none;">
   <header class="top">
     <div>
-      <h1>SD EOT Exam — Corrector</h1>
-      <div class="sub">Corrección de intentos · SD | Company</div>
+      <h1>SD EOT Exam — Grader</h1>
+      <div class="sub">Grading attempts · SD | Company</div>
     </div>
     <div class="acct">
       <span id="acct-email">&nbsp;</span>
-      <button id="logout-btn">Cerrar sesión</button>
+      <button id="logout-btn">Log out</button>
     </div>
   </header>
 
   <div class="grid">
     <div class="panel">
-      <h2>Pendientes <span class="count" id="pending-count">0</span></h2>
+      <h2>Pending <span class="count" id="pending-count">0</span></h2>
       <div id="pending-list"></div>
-      <div id="pending-empty" class="empty-note" style="display:none;">No hay exámenes pendientes por corregir ahora mismo.</div>
+      <div id="pending-empty" class="empty-note" style="display:none;">There are no exams pending review right now.</div>
       <div id="pending-error" class="empty-note" style="display:none;color:var(--red);"></div>
     </div>
 
     <div class="panel" id="grading-panel">
       <div id="placeholder" class="placeholder">
         <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>
-        <div>Selecciona un examen pendiente para empezar a corregirlo.</div>
+        <div>Select a pending exam to start grading it.</div>
       </div>
 
       <div id="grading-body" style="display:none;">
@@ -765,66 +815,66 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
             <div class="u" id="g-username"></div>
             <div class="t" id="g-submitted"></div>
           </div>
-          <button class="link-btn" id="discard-btn">Eliminar sin corregir</button>
+          <button class="link-btn" id="discard-btn">Discard without grading</button>
         </div>
         <div id="questions"></div>
-        <div class="hint">Toca una pregunta para marcarla como fallada. Las que no toques quedan como correctas.</div>
+        <div class="hint">Tap a question to mark it as wrong. Questions you don't tap are considered correct.</div>
       </div>
     </div>
   </div>
 
   <div class="panel" style="margin-top:20px;">
-    <h2>Corregidos recientemente <span class="count" id="recent-count">0</span></h2>
+    <h2>Recently graded <span class="count" id="recent-count">0</span></h2>
     <div id="recent-list"></div>
-    <div id="recent-empty" class="empty-note" style="display:none;">Aún no has corregido ningún examen en las últimas 2 horas.</div>
+    <div id="recent-empty" class="empty-note" style="display:none;">You haven't graded any exams in the last 2 hours.</div>
   </div>
 </div>
 
 <div id="login-view" class="login-wrap" style="display:none;">
-  <h1>SD EOT Exam — Corrector</h1>
-  <p>Inicia sesión con la cuenta de Google autorizada para buscar el formulario y corregir los intentos pendientes.</p>
-  <a class="btn" href="/login">Iniciar sesión con Google</a>
+  <h1>SD EOT Exam — Grader</h1>
+  <p>Sign in with the authorized Google account to find the form and grade pending attempts.</p>
+  <a class="btn" href="/login">Sign in with Google</a>
 </div>
 
-<button class="fab" id="fab" disabled title="Finalizar corrección">
+<button class="fab" id="fab" disabled title="Finish grading">
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>
-  Finalizar corrección
+  Finish grading
 </button>
 
-<!-- modal: confirmar fin -->
+<!-- modal: confirm finish -->
 <div class="overlay" id="ov-confirm">
   <div class="modal">
-    <h3>¿Terminaste de corregir?</h3>
-    <p>Las preguntas que no marcaste se consideran correctas. Esto guardará los cambios de este examen.</p>
+    <h3>Finished grading?</h3>
+    <p>Questions you didn't mark are considered correct. This will save the changes for this exam.</p>
     <div class="row">
-      <button class="btn ghost" data-close="ov-confirm">Cancelar</button>
-      <button class="btn primary" id="confirm-yes">Sí, finalizar</button>
+      <button class="btn ghost" data-close="ov-confirm">Cancel</button>
+      <button class="btn primary" id="confirm-yes">Yes, finish</button>
     </div>
   </div>
 </div>
 
-<!-- modal: aprobado / suspendido -->
+<!-- modal: pass / fail -->
 <div class="overlay" id="ov-result">
   <div class="modal">
-    <h3>¿Aprobó o suspendió?</h3>
-    <p>Se generará el mensaje correspondiente para enviárselo.</p>
+    <h3>Pass or fail?</h3>
+    <p>The corresponding message will be generated to send them.</p>
     <div class="row">
-      <button class="btn red" id="result-fail">✕ Suspendido</button>
-      <button class="btn green" id="result-pass">✓ Aprobado</button>
+      <button class="btn red" id="result-fail">✕ Fail</button>
+      <button class="btn green" id="result-pass">✓ Pass</button>
     </div>
   </div>
 </div>
 
-<!-- modal: mensaje generado -->
+<!-- modal: generated message -->
 <div class="overlay" id="ov-message">
   <div class="modal" style="max-width:560px;">
-    <h3 id="msg-title">Mensaje generado</h3>
-    <p>Revisa el texto y cópialo o descárgalo para enviarlo.</p>
+    <h3 id="msg-title">Generated message</h3>
+    <p>Review the text, then copy or download it to send.</p>
     <textarea class="msgbox" id="msg-text" readonly></textarea>
     <div class="row">
-      <button class="btn ghost" id="msg-copy">Copiar</button>
-      <button class="btn ghost" id="msg-download">Descargar .txt</button>
-      <button class="btn primary" data-close="ov-message">Cerrar</button>
+      <button class="btn ghost" id="msg-copy">Copy</button>
+      <button class="btn ghost" id="msg-download">Download .txt</button>
+      <button class="btn primary" data-close="ov-message">Close</button>
     </div>
   </div>
 </div>
@@ -852,6 +902,19 @@ document.querySelectorAll('[data-close]').forEach(b=>{
   b.addEventListener('click', ()=>closeModal(b.dataset.close));
 });
 
+/* ---------- theme toggle ---------- */
+function applyTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  try{ localStorage.setItem('eot-theme', theme); }catch(e){}
+  const meta = $('#theme-color-meta');
+  if(meta) meta.setAttribute('content', theme === 'dark' ? '#12151c' : '#f7f8fa');
+}
+$('#theme-toggle').addEventListener('click', ()=>{
+  const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+});
+applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
+
 async function apiGet(url){
   const r = await fetch(url);
   if(r.status === 401){ window.location.href = '/login'; throw new Error('auth'); }
@@ -867,10 +930,10 @@ function timeAgo(iso){
   if(!iso) return '';
   const d = new Date(iso);
   const mins = Math.max(0, Math.round((Date.now()-d.getTime())/60000));
-  if(mins < 1) return 'justo ahora';
-  if(mins < 60) return `hace ${mins} min`;
+  if(mins < 1) return 'just now';
+  if(mins < 60) return `${mins} min ago`;
   const h = Math.floor(mins/60);
-  return `hace ${h}h ${mins%60}min`;
+  return `${h}h ${mins%60}min ago`;
 }
 
 async function loadPending(){
@@ -915,21 +978,21 @@ function renderGrading(){
   $('#placeholder').style.display='none';
   $('#grading-body').style.display='block';
   $('#g-username').textContent = currentResponse.username;
-  $('#g-submitted').textContent = 'Enviado ' + timeAgo(currentResponse.submitted_at);
+  $('#g-submitted').textContent = 'Submitted ' + timeAgo(currentResponse.submitted_at);
   const box = $('#questions');
   box.innerHTML='';
   currentResponse.questions.forEach((q, idx)=>{
     const row = el(`<div class="qrow" data-id="${q.id}">
         <div class="qrow-head">
-          <span class="tag">Pregunta ${idx+1}</span>
-          <span class="wrong-flag">Fallada</span>
+          <span class="tag">Question ${idx+1}</span>
+          <span class="wrong-flag">Wrong</span>
         </div>
         <div class="qsection q-question">
-          <div class="qsection-label">Pregunta</div>
+          <div class="qsection-label">Question</div>
           <div class="qsection-body qt"></div>
         </div>
         <div class="qsection q-answer">
-          <div class="qsection-label">Respuesta</div>
+          <div class="qsection-label">Answer</div>
           <div class="qsection-body qa"></div>
         </div>
       </div>`);
@@ -973,7 +1036,7 @@ async function submitGrade(result){
     result
   });
   if(data.error){ toast(data.error); return; }
-  $('#msg-title').textContent = result==='fail' ? 'Examen suspendido' : 'Examen aprobado';
+  $('#msg-title').textContent = result==='fail' ? 'Exam failed' : 'Exam passed';
   $('#msg-text').value = data.message;
   openModal('ov-message');
   resetGradingPanel();
@@ -985,10 +1048,10 @@ $('#result-pass').addEventListener('click', ()=>submitGrade('pass'));
 
 $('#msg-copy').addEventListener('click', async ()=>{
   await navigator.clipboard.writeText($('#msg-text').value);
-  toast('Mensaje copiado al portapapeles');
+  toast('Message copied to clipboard');
 });
 $('#msg-download').addEventListener('click', ()=>{
-  const result = $('#msg-title').textContent.includes('suspendido') ? 'formatfailed' : 'formatpassed';
+  const result = $('#msg-title').textContent.includes('failed') ? 'formatfailed' : 'formatpassed';
   const blob = new Blob([$('#msg-text').value], {type:'text/plain'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -998,7 +1061,7 @@ $('#msg-download').addEventListener('click', ()=>{
 
 $('#discard-btn').addEventListener('click', async ()=>{
   if(!currentResponse) return;
-  if(!confirm('¿Eliminar este examen sin corregirlo? No se podrá corregir más adelante.')) return;
+  if(!confirm('Delete this exam without grading it? It cannot be graded later.')) return;
   await apiPost('/api/delete', {response_id: currentResponse.response_id, username: currentResponse.username});
   resetGradingPanel();
   loadPending();
@@ -1018,19 +1081,19 @@ async function loadRecent(){
           <div class="meta"></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
-          <span class="badge ${r.result==='pass'?'pass':'fail'}">${r.result==='pass'?'Aprobado':'Suspendido'}</span>
-          <button class="iconbtn" data-act="view" title="Ver mensaje">
+          <span class="badge ${r.result==='pass'?'pass':'fail'}">${r.result==='pass'?'Pass':'Fail'}</span>
+          <button class="iconbtn" data-act="view" title="View message">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
-          <button class="iconbtn" data-act="del" title="Eliminar">
+          <button class="iconbtn" data-act="del" title="Delete">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
           </button>
         </div>
       </div>`);
     row.querySelector('.u').textContent = r.username;
-    row.querySelector('.meta').textContent = `${timeAgo(r.graded_at)} · se oculta en ${Math.floor(r.minutes_left/60)}h ${r.minutes_left%60}min`;
+    row.querySelector('.meta').textContent = `${timeAgo(r.graded_at)} · hides in ${Math.floor(r.minutes_left/60)}h ${r.minutes_left%60}min`;
     row.querySelector('[data-act="view"]').addEventListener('click', ()=>{
-      $('#msg-title').textContent = r.result==='fail' ? 'Examen suspendido' : 'Examen aprobado';
+      $('#msg-title').textContent = r.result==='fail' ? 'Exam failed' : 'Exam passed';
       $('#msg-text').value = r.message;
       openModal('ov-message');
     });
@@ -1070,15 +1133,15 @@ init();
 def index():
     sid = request.cookies.get("sid")
     if not sid or sid not in SESSIONS:
-        return INDEX_HTML  # el JS detecta 401 en /api/me y muestra la vista de login
+        return INDEX_HTML  # the JS detects a 401 on /api/me and shows the login view
     return INDEX_HTML
 
 
 if __name__ == "__main__":
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not ADMIN_EMAIL:
-        print("⚠  Faltan GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / ADMIN_EMAIL.")
-        print("   Crea un archivo .env (mira .env.example) o expórtalas antes de arrancar.")
-    print(f"➡  Escuchando en http://{HOST}:{PORT}")
-    print(f"   Redirect URI configurada: {GOOGLE_REDIRECT_URI}")
-    # Nota: en Render, el proceso lo arranca gunicorn (ver Procfile), no esta rama.
+        print("⚠  Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / ADMIN_EMAIL.")
+        print("   Create a .env file (see .env.example) or export them before starting.")
+    print(f"➡  Listening on http://{HOST}:{PORT}")
+    print(f"   Configured redirect URI: {GOOGLE_REDIRECT_URI}")
+    # Note: on Render, the process is started by gunicorn (see Procfile), not this branch.
     app.run(host=HOST, port=PORT, debug=False)
