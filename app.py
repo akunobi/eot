@@ -66,7 +66,7 @@ SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/drive.metadata.readonly",
-    "https://www.googleapis.com/auth/forms.body",
+    "https://www.googleapis.com/auth/forms.body.readonly",
     "https://www.googleapis.com/auth/forms.responses.readonly",
 ]
 
@@ -129,10 +129,16 @@ def init_db():
             wrong_questions TEXT,      -- JSON list of question titles
             message         TEXT,      -- final generated text
             graded_at       TEXT,      -- ISO timestamp UTC
-            archived        INTEGER DEFAULT 0
+            archived        INTEGER DEFAULT 0,
+            points_assigned TEXT DEFAULT '{}'  -- JSON {questionId: pointsAwarded}, the base/max value always comes live from the form
         )
         """
     )
+    # Migration for DBs created before this column existed.
+    try:
+        db.execute("ALTER TABLE ledger ADD COLUMN points_assigned TEXT DEFAULT '{}'")
+    except sqlite3.OperationalError:
+        pass
     db.commit()
     db.close()
 
@@ -366,15 +372,6 @@ def question_map(form):
     return qmap, order, qmeta
 
 
-def find_item_by_question_id(form, question_id):
-    """Returns (item_index, item_dict) for the item holding this questionId, or (None, None)."""
-    for idx, item in enumerate(form.get("items", [])):
-        qi = item.get("questionItem")
-        if qi and qi.get("question", {}).get("questionId") == question_id:
-            return idx, item
-    return None, None
-
-
 def extract_answer_text(answer):
     if not answer:
         return "(no answer)"
@@ -510,64 +507,6 @@ def api_response_detail(response_id):
     })
 
 
-@app.route("/api/set_points", methods=["POST"])
-@login_required
-def api_set_points():
-    data = request.get_json(force=True, silent=True) or {}
-    question_id = data.get("question_id")
-    points = data.get("points")
-    if not question_id or points is None:
-        return jsonify({"error": "Missing question_id or points."}), 400
-    try:
-        points = int(points)
-    except (TypeError, ValueError):
-        return jsonify({"error": "Points must be a whole number."}), 400
-    if points < 0:
-        return jsonify({"error": "Points can't be negative."}), 400
-
-    creds = request.google_creds
-    form_id = find_form_id(creds, FORM_TITLE)
-    if not form_id:
-        return jsonify({"error": f'Form "{FORM_TITLE}" not found.'}), 404
-
-    form = get_form(creds, form_id)
-    idx, item = find_item_by_question_id(form, question_id)
-    if item is None:
-        return jsonify({"error": "That question was not found in the form."}), 404
-
-    # Keep any existing grading fields (correctAnswers, whenRight/whenWrong)
-    # and only change the point value.
-    grading = dict(item["questionItem"]["question"].get("grading") or {})
-    grading["pointValue"] = points
-
-    update_body = {
-        "requests": [
-            {
-                "updateItem": {
-                    "item": {
-                        "questionItem": {
-                            "question": {
-                                "questionId": question_id,
-                                "grading": grading,
-                            }
-                        }
-                    },
-                    "location": {"index": idx},
-                    "updateMask": "questionItem.question.grading",
-                }
-            }
-        ]
-    }
-
-    try:
-        forms = build("forms", "v1", credentials=creds)
-        forms.forms().batchUpdate(formId=form_id, body=update_body).execute()
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": f"Could not update the form: {exc}"}), 500
-
-    return jsonify({"error": None, "points": points})
-
-
 @app.route("/api/grade", methods=["POST"])
 @login_required
 def api_grade():
@@ -575,27 +514,36 @@ def api_grade():
     response_id = data.get("response_id")
     username = data.get("username", "")
     wrong_questions = data.get("wrong_questions", [])
+    points_assigned = data.get("points_assigned", {})
     result = data.get("result")
 
     if not response_id or result not in ("pass", "fail"):
         return jsonify({"error": "Incomplete data."}), 400
+    if not isinstance(points_assigned, dict):
+        points_assigned = {}
 
     message = build_message(result, username, wrong_questions)
 
     db = get_db()
     db.execute(
         """
-        INSERT INTO ledger (response_id, username, result, wrong_questions, message, graded_at, archived)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
+        INSERT INTO ledger (response_id, username, result, wrong_questions, message, graded_at, archived, points_assigned)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
         ON CONFLICT(response_id) DO UPDATE SET
             username=excluded.username,
             result=excluded.result,
             wrong_questions=excluded.wrong_questions,
             message=excluded.message,
             graded_at=excluded.graded_at,
-            archived=0
+            archived=0,
+            points_assigned=excluded.points_assigned
         """,
-        (response_id, username, result, json.dumps(wrong_questions, ensure_ascii=False), message, now_iso()),
+        (
+            response_id, username, result,
+            json.dumps(wrong_questions, ensure_ascii=False),
+            message, now_iso(),
+            json.dumps(points_assigned, ensure_ascii=False),
+        ),
     )
     db.commit()
     db.close()
@@ -650,6 +598,7 @@ def api_recent():
             "username": r["username"],
             "result": r["result"],
             "wrong_questions": json.loads(r["wrong_questions"] or "[]"),
+            "points_assigned": json.loads(r["points_assigned"] or "{}"),
             "message": r["message"],
             "graded_at": r["graded_at"],
             "minutes_left": minutes_left,
@@ -666,7 +615,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theme-color" id="theme-color-meta" content="#f7f8fa">
+<meta name="theme-color" id="theme-color-meta" content="#e9ebef">
 <title>SD EOT Exam — Grader</title>
 <script>
 // Applied before first paint to avoid a light/dark flash on load.
@@ -680,9 +629,9 @@ INDEX_HTML = """<!DOCTYPE html>
 </script>
 <style>
 :root{
-  --bg:#f7f8fa;
+  --bg:#e9ebef;
   --card:#ffffff;
-  --border:#e3e6ea;
+  --border:#d5d9e0;
   --text:#1f2430;
   --text-dim:#707685;
   --blue:#2563eb;
@@ -698,9 +647,9 @@ INDEX_HTML = """<!DOCTYPE html>
   --radius:10px;
 }
 [data-theme="dark"]{
-  --bg:#12151c;
-  --card:#1a1f2b;
-  --border:#2b3140;
+  --bg:#0b0d12;
+  --card:#141824;
+  --border:#242a38;
   --text:#e7e9ee;
   --text-dim:#96a0b3;
   --blue:#5b93ff;
@@ -798,8 +747,8 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .qrow .wrong-flag{display:none;font-size:.8rem;font-weight:600;color:var(--red);flex:none;}
 .qrow.wrong .wrong-flag{display:inline;}
 .points-edit{display:flex;align-items:center;gap:4px;}
-.points-input{width:48px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 6px;font-size:.8rem;}
-.points-save{padding:3px 6px;}
+.points-input{width:40px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 6px;font-size:.8rem;}
+.points-base{color:var(--text-dim);font-size:.8rem;font-weight:600;}
 
 .qsection{margin-bottom:10px;}
 .qsection:last-child{margin-bottom:0;}
@@ -1038,13 +987,13 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
   </div>
 </div>
 
-<button class="fab" id="fab" disabled title="Finish grading">
+<button class="fab" id="fab" disabled title="Finish grading" style="display:none;">
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>
   Finish grading
 </button>
 
-<!-- floating reference doc tab -->
-<button class="doc-tab" id="doc-tab" title="Open reference doc">
+<!-- floating reference doc tab (signed-in users only) -->
+<button class="doc-tab" id="doc-tab" title="Open reference doc" style="display:none;">
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
   Reference doc
 </button>
@@ -1124,6 +1073,7 @@ let wrongIds = new Set();
 let pendingCache = [];
 
 function $(sel){return document.querySelector(sel);}
+function $$(sel){return Array.from(document.querySelectorAll(sel));}
 function el(html){const t=document.createElement('template');t.innerHTML=html.trim();return t.content.firstChild;}
 
 function toast(msg){
@@ -1144,7 +1094,7 @@ function applyTheme(theme){
   document.documentElement.setAttribute('data-theme', theme);
   try{ localStorage.setItem('eot-theme', theme); }catch(e){}
   const meta = $('#theme-color-meta');
-  if(meta) meta.setAttribute('content', theme === 'dark' ? '#12151c' : '#f7f8fa');
+  if(meta) meta.setAttribute('content', theme === 'dark' ? '#0b0d12' : '#e9ebef');
 }
 $('#theme-toggle').addEventListener('click', ()=>{
   const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
@@ -1247,11 +1197,9 @@ function renderGrading(){
     const row = el(`<div class="qrow" data-id="${q.id}">
         <div class="qrow-head">
           <span class="tag">Question ${idx+1}</span>
-          <div class="points-edit">
-            <input type="number" class="points-input" min="0" step="1" placeholder="pts" value="${q.points != null ? q.points : ''}">
-            <button type="button" class="iconbtn points-save" title="Save point value to the form">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>
-            </button>
+          <div class="points-edit" title="Points assigned out of the question's value">
+            <input type="number" class="points-input" min="0" ${q.points != null ? `max="${q.points}"` : ''} step="1" placeholder="pts" value="${q.points != null ? q.points : ''}">
+            <span class="points-base">/${q.points != null ? q.points : '—'}</span>
           </div>
           <span class="wrong-flag">Wrong</span>
         </div>
@@ -1278,19 +1226,7 @@ function renderGrading(){
       });
     }
     const pointsInput = row.querySelector('.points-input');
-    const pointsSaveBtn = row.querySelector('.points-save');
     pointsInput.addEventListener('click', (e)=>e.stopPropagation());
-    pointsSaveBtn.addEventListener('click', async (e)=>{
-      e.stopPropagation();
-      const val = pointsInput.value;
-      if(val === ''){ toast('Enter a point value first'); return; }
-      const points = parseInt(val, 10);
-      if(isNaN(points) || points < 0){ toast('Points must be 0 or more'); return; }
-      const res = await apiPost('/api/set_points', {question_id: q.id, points});
-      if(res.error){ toast(res.error); return; }
-      q.points = points;
-      toast('Points saved to the form');
-    });
     row.addEventListener('click', ()=>{
       if(wrongIds.has(q.id)){ wrongIds.delete(q.id); row.classList.remove('wrong'); }
       else { wrongIds.add(q.id); row.classList.add('wrong'); }
@@ -1352,10 +1288,17 @@ async function submitGrade(result){
   const wrongTitles = currentResponse.questions
     .filter(q=>wrongIds.has(q.id))
     .map(q=>q.title);
+  const pointsAssigned = {};
+  $$('.qrow').forEach(row=>{
+    const qid = row.dataset.id;
+    const input = row.querySelector('.points-input');
+    if(input && input.value !== '') pointsAssigned[qid] = parseInt(input.value, 10);
+  });
   const data = await apiPost('/api/grade', {
     response_id: currentResponse.response_id,
     username: currentResponse.username,
     wrong_questions: wrongTitles,
+    points_assigned: pointsAssigned,
     result
   });
   if(data.error){ toast(data.error); return; }
@@ -1437,6 +1380,8 @@ async function init(){
     const me = await r.json();
     $('#app').style.display='block';
     $('#login-view').style.display='none';
+    $('#fab').style.display='flex';
+    $('#doc-tab').style.display='flex';
     $('#acct-email').textContent = me.email;
     await loadPending();
     await loadRecent();
@@ -1445,6 +1390,8 @@ async function init(){
   }catch(e){
     $('#app').style.display='none';
     $('#login-view').style.display='flex';
+    $('#fab').style.display='none';
+    $('#doc-tab').style.display='none';
   }
 }
 init();
@@ -1482,11 +1429,11 @@ LEGAL_PAGE_TEMPLATE = """<!DOCTYPE html>
 </script>
 <style>
 :root{
-  --bg:#f7f8fa; --card:#ffffff; --border:#e3e6ea; --text:#1f2430; --text-dim:#707685;
+  --bg:#e9ebef; --card:#ffffff; --border:#d5d9e0; --text:#1f2430; --text-dim:#707685;
   --blue:#2563eb; --radius:14px;
 }
 [data-theme="dark"]{
-  --bg:#12151c; --card:#1a1f2b; --border:#2b3140; --text:#e7e9ee; --text-dim:#96a0b3;
+  --bg:#0b0d12; --card:#141824; --border:#242a38; --text:#e7e9ee; --text-dim:#96a0b3;
   --blue:#5b93ff;
 }
 *{box-sizing:border-box;}
@@ -1571,11 +1518,11 @@ def privacy():
     <p>When authenticating through Google OAuth, the Application requests permissions to access:</p>
     <ul>
         <li><strong>Google Account Email:</strong> Used exclusively to authenticate authorized application managers.</li>
-        <li><strong>Google Forms & Drive Metadata:</strong> Used to fetch student submissions from linked Google Forms for automatic response evaluation, and to update a question's point value in the form when an administrator edits it within the app.</li>
+        <li><strong>Google Forms & Drive Metadata:</strong> Used to fetch student submissions from linked Google Forms for automatic response evaluation. The Application only reads form and response data; it never modifies the linked Google Form.</li>
     </ul>
 
     <h2>2. Data Usage & Sharing</h2>
-    <p>Accessed data is processed only to evaluate exam answers, flag incorrect questions, generate text feedback for applicants, and update point values on the linked form. We do not sell, rent, or share user data with any third parties.</p>
+    <p>Accessed data is processed only to evaluate exam answers, flag incorrect questions, and generate text feedback for applicants. We do not sell, rent, or share user data with any third parties.</p>
 
     <h2>3. Google API Limited Use Disclosure</h2>
     <p>SD EOT Exam's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
