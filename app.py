@@ -333,9 +333,11 @@ def list_all_responses(creds, form_id):
 
 
 def question_map(form):
-    """Returns (dict questionId -> title, ordered list of questionId)."""
+    """Returns (dict questionId -> title, ordered list of questionId,
+    dict questionId -> {"type", "options", "correct"} for choice questions)."""
     qmap = {}
     order = []
+    qmeta = {}
     for item in form.get("items", []):
         qi = item.get("questionItem")
         if not qi:
@@ -347,7 +349,18 @@ def question_map(form):
         title = item.get("title") or "(untitled question)"
         qmap[qid] = title
         order.append(qid)
-    return qmap, order
+
+        meta = {"type": None, "options": [], "correct": None}
+        choice = q.get("choiceQuestion")
+        if choice:
+            meta["type"] = choice.get("type")  # RADIO | CHECKBOX | DROP_DOWN
+            meta["options"] = [o.get("value", "") for o in choice.get("options", []) if o.get("value")]
+        grading = q.get("grading") or {}
+        correct_answers = grading.get("correctAnswers")
+        if correct_answers:
+            meta["correct"] = [a.get("value", "") for a in correct_answers.get("answers", []) if a.get("value")]
+        qmeta[qid] = meta
+    return qmap, order, qmeta
 
 
 def extract_answer_text(answer):
@@ -359,6 +372,16 @@ def extract_answer_text(answer):
         joined = ", ".join(v for v in values if v)
         return joined or "(no answer)"
     return "(unsupported answer type)"
+
+
+def extract_answer_list(answer):
+    """Raw list of selected values (unjoined), used to match against form options."""
+    if not answer:
+        return []
+    text_answers = answer.get("textAnswers")
+    if text_answers:
+        return [a.get("value", "") for a in text_answers.get("answers", []) if a.get("value")]
+    return []
 
 
 USERNAME_HINT = re.compile(r"usuario|username|discord|roblox", re.IGNORECASE)
@@ -407,7 +430,7 @@ def api_pending():
         return jsonify({"error": f"Could not read the form's responses: {exc}", "pending": []}), 200
 
     form = get_form(creds, form_id)
-    qmap, order = question_map(form)
+    qmap, order, _qmeta = question_map(form)
 
     already = graded_response_ids()
     pending = []
@@ -433,7 +456,7 @@ def api_response_detail(response_id):
         return jsonify({"error": f'Form "{FORM_TITLE}" not found.'}), 404
 
     form = get_form(creds, form_id)
-    qmap, order = question_map(form)
+    qmap, order, qmeta = question_map(form)
 
     try:
         responses = list_all_responses(creds, form_id)
@@ -452,8 +475,18 @@ def api_response_detail(response_id):
         title = qmap.get(qid, "(untitled question)")
         if USERNAME_HINT.search(title):
             continue  # don't show the identification question as a question to grade
-        answer_text = extract_answer_text(answers.get(qid))
-        questions.append({"id": qid, "title": title, "answer": answer_text})
+        raw_answer = answers.get(qid)
+        answer_text = extract_answer_text(raw_answer)
+        meta = qmeta.get(qid, {})
+        questions.append({
+            "id": qid,
+            "title": title,
+            "answer": answer_text,
+            "type": meta.get("type"),          # RADIO | CHECKBOX | DROP_DOWN | None
+            "options": meta.get("options") or [],  # all options as they appear in the form
+            "correct": meta.get("correct"),    # list of correct values, or None if not exposed
+            "selected": extract_answer_list(raw_answer),  # raw selected values
+        })
 
     return jsonify({
         "error": None,
@@ -697,6 +730,19 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .qsection{margin-bottom:10px;}
 .qsection:last-child{margin-bottom:0;}
 .qsection-label{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);margin-bottom:4px;}
+.qsection-label-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
+.qsection-label-row .qsection-label{margin-bottom:0;}
+.view-form-btn{padding:3px 7px;}
+.fv-options{display:flex;flex-direction:column;gap:7px;margin:14px 0;}
+.fv-opt{display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:.9rem;}
+.fv-opt .fv-mark{width:16px;flex:none;text-align:center;color:var(--text-dim);}
+.fv-selected{border-color:var(--text-dim);}
+.fv-right{border-color:var(--green);background:var(--green-dim);color:var(--green);}
+.fv-right .fv-mark{color:var(--green);}
+.fv-wrong{border-color:var(--red);background:var(--red-dim);color:var(--red);}
+.fv-wrong .fv-mark{color:var(--red);}
+.fv-missed{border-color:var(--green);border-style:dashed;color:var(--green);}
+.fv-note{color:var(--text-dim);font-size:.8rem;margin-top:2px;}
 .qsection-body{font-size:.95rem;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;}
 .q-question .qsection-body{color:var(--text);}
 .q-answer{padding:9px 12px;background:var(--bg);border-left:3px solid var(--border);border-radius:0 6px 6px 0;}
@@ -945,6 +991,19 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
   </div>
 </div>
 
+
+<!-- modal: view a choice question as it looks in the form -->
+<div class="overlay" id="ov-formview">
+  <div class="modal" style="max-width:520px;">
+    <h3 id="fv-title">Question</h3>
+    <div id="fv-options" class="fv-options"></div>
+    <div id="fv-note" class="fv-note" style="display:none;"></div>
+    <div class="row">
+      <button class="btn primary" data-close="ov-formview">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1072,6 +1131,7 @@ function renderGrading(){
   const box = $('#questions');
   box.innerHTML='';
   currentResponse.questions.forEach((q, idx)=>{
+    const hasChoices = !!(q.type && q.options && q.options.length);
     const row = el(`<div class="qrow" data-id="${q.id}">
         <div class="qrow-head">
           <span class="tag">Question ${idx+1}</span>
@@ -1082,18 +1142,59 @@ function renderGrading(){
           <div class="qsection-body qt"></div>
         </div>
         <div class="qsection q-answer">
-          <div class="qsection-label">Answer</div>
+          <div class="qsection-label-row">
+            <div class="qsection-label">Answer</div>
+            ${hasChoices ? `<button type="button" class="iconbtn view-form-btn" title="View as it looks in the form">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>` : ''}
+          </div>
           <div class="qsection-body qa"></div>
         </div>
       </div>`);
     row.querySelector('.qt').textContent = q.title;
     row.querySelector('.qa').textContent = q.answer;
+    if(hasChoices){
+      row.querySelector('.view-form-btn').addEventListener('click', (e)=>{
+        e.stopPropagation();
+        openFormView(q);
+      });
+    }
     row.addEventListener('click', ()=>{
       if(wrongIds.has(q.id)){ wrongIds.delete(q.id); row.classList.remove('wrong'); }
       else { wrongIds.add(q.id); row.classList.add('wrong'); }
     });
     box.appendChild(row);
   });
+}
+
+function openFormView(q){
+  $('#fv-title').textContent = q.title;
+  const box = $('#fv-options');
+  box.innerHTML = '';
+  const selected = new Set(q.selected || []);
+  const correct = q.correct ? new Set(q.correct) : null;
+  const isCheckbox = q.type === 'CHECKBOX';
+  q.options.forEach(opt=>{
+    const isSelected = selected.has(opt);
+    const isCorrect = correct ? correct.has(opt) : null;
+    let cls = 'fv-opt';
+    if(isSelected && isCorrect === true) cls += ' fv-right';
+    else if(isSelected && isCorrect === false) cls += ' fv-wrong';
+    else if(isSelected) cls += ' fv-selected';
+    else if(isCorrect === true) cls += ' fv-missed';
+    const row = el(`<div class="${cls}"><span class="fv-mark"></span><span class="fv-text"></span></div>`);
+    row.querySelector('.fv-mark').textContent = isSelected ? (isCheckbox ? '☑' : '●') : (isCheckbox ? '☐' : '○');
+    row.querySelector('.fv-text').textContent = opt;
+    box.appendChild(row);
+  });
+  const note = $('#fv-note');
+  if(correct === null){
+    note.style.display = 'block';
+    note.textContent = "This form doesn't expose correct answers here — only what was selected is shown.";
+  } else {
+    note.style.display = 'none';
+  }
+  openModal('ov-formview');
 }
 
 function resetGradingPanel(){
