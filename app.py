@@ -21,6 +21,7 @@ import urllib.request
 import urllib.error
 from functools import wraps
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     from dotenv import load_dotenv
@@ -351,11 +352,24 @@ def list_all_responses(creds, form_id):
 
 def question_map(form):
     """Returns (dict questionId -> title, ordered list of questionId,
-    dict questionId -> {"type", "options", "correct"} for choice questions)."""
+    dict questionId -> {"type", "options", "correct", "points",
+    "section_index", "section_title"} for choice questions).
+
+    Google Forms represents a new section/page as a standalone
+    `pageBreakItem` in `form.items`; everything after it (until the next
+    one) belongs to that section. We walk items in order and stamp each
+    question with the section it falls under, so the grader can group
+    questions by section and total them up per section."""
     qmap = {}
     order = []
     qmeta = {}
+    section_index = 0
+    section_title = "Section 1"
     for item in form.get("items", []):
+        if item.get("pageBreakItem") is not None:
+            section_index += 1
+            section_title = item.get("title") or f"Section {section_index + 1}"
+            continue
         qi = item.get("questionItem")
         if not qi:
             continue
@@ -367,7 +381,10 @@ def question_map(form):
         qmap[qid] = title
         order.append(qid)
 
-        meta = {"type": None, "options": [], "correct": None, "points": None}
+        meta = {
+            "type": None, "options": [], "correct": None, "points": None,
+            "section_index": section_index, "section_title": section_title,
+        }
         choice = q.get("choiceQuestion")
         if choice:
             meta["type"] = choice.get("type")  # RADIO | CHECKBOX | DROP_DOWN
@@ -519,6 +536,8 @@ def api_response_detail(response_id):
             "awarded": grade.get("score"),     # score currently recorded on THIS response in
                                                 # the Form (read-only via API), or None if never graded
             "form_correct": grade.get("correct"),  # Forms' own right/wrong flag for this response, or None
+            "section_index": meta.get("section_index", 0),
+            "section_title": meta.get("section_title") or "Section 1",
         })
 
     return jsonify({
@@ -724,21 +743,32 @@ def api_grade():
     username = data.get("username", "")
     wrong_questions = data.get("wrong_questions", [])
     points_assigned = data.get("points_assigned", {})
+    already_synced = data.get("already_synced", {})
     result = data.get("result")
 
     if not response_id or result not in ("pass", "fail"):
         return jsonify({"error": "Incomplete data."}), 400
     if not isinstance(points_assigned, dict):
         points_assigned = {}
+    if not isinstance(already_synced, dict):
+        already_synced = {}
 
-    # Finalizing a grade used to only save points_assigned into the LOCAL
-    # ledger below — the Form itself only got updated if the grader had
-    # separately clicked the per-question sync checkmark first. That made
-    # it easy for the web app's record and the actual Form to drift apart.
-    # Push every assigned score to the bridge now too, so finalizing a
-    # grade is enough on its own to keep the Form in sync.
+    # Scores are now pushed to the Form in real time as the grader types
+    # them (see /api/set_response_score), so `already_synced` tells us
+    # which question -> score pairs the browser already confirmed were
+    # pushed. Only the stragglers (never synced, or edited after the last
+    # successful sync — e.g. typed while offline) need pushing here. This
+    # used to push EVERY assigned score serially at finish time, which
+    # could take minutes for a long exam and time the whole request out —
+    # that's the failure the real-time sync above and the parallel push
+    # below both fix.
+    to_push = {
+        qid: score for qid, score in points_assigned.items()
+        if already_synced.get(qid) != score
+    }
+
     sync_errors = []
-    if points_assigned and APPS_SCRIPT_BRIDGE_URL and APPS_SCRIPT_BRIDGE_SECRET:
+    if to_push and APPS_SCRIPT_BRIDGE_URL and APPS_SCRIPT_BRIDGE_SECRET:
         creds = request.google_creds
         form_id = find_form_id(creds, FORM_TITLE)
         if not form_id:
@@ -759,19 +789,29 @@ def api_grade():
 
             if target is not None:
                 response_created_time = target.get("createTime")
-                for qid, score in points_assigned.items():
+
+                def push_one(qid, score):
                     question_title = qmap.get(qid)
                     if question_title is None:
-                        sync_errors.append(f"Question not found in the Form ({qid}) — score not pushed.")
-                        continue
+                        return f"Question not found in the Form ({qid}) — score not pushed."
                     expected_answer_text = extract_answer_text(target.get("answers", {}).get(qid))
                     ok, res = push_score_to_bridge(
                         form_id, response_id, qid, question_title, score,
                         response_created_time=response_created_time,
                         expected_answer_text=expected_answer_text,
                     )
-                    if not ok:
-                        sync_errors.append(f'"{question_title}": {res}')
+                    return None if ok else f'"{question_title}": {res}'
+
+                # Each push is its own round trip to the Apps Script
+                # bridge — run any stragglers concurrently instead of one
+                # after another so a handful of leftovers can't add up to
+                # a request timeout.
+                with ThreadPoolExecutor(max_workers=min(8, len(to_push))) as pool:
+                    futures = [pool.submit(push_one, qid, score) for qid, score in to_push.items()]
+                    for future in as_completed(futures):
+                        err = future.result()
+                        if err:
+                            sync_errors.append(err)
 
     message = build_message(result, username, wrong_questions)
 
@@ -1025,6 +1065,7 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .unsaved-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);display:inline-block;margin-left:7px;vertical-align:middle;}
 .wrong-count{font-size:.8rem;color:var(--text-dim);font-weight:600;white-space:nowrap;}
 .wrong-count.has-wrong{color:var(--red);}
+.score-total{font-size:.8rem;color:var(--text);font-weight:700;white-space:nowrap;}
 .toast.error{background:var(--red);color:#fff;}
 .toast.success{background:var(--green);color:#fff;}
 .kbd{
@@ -1071,6 +1112,20 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .qsection-label{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);margin-bottom:4px;}
 .qsection-label-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
 .qsection-label-row .qsection-label{margin-bottom:0;}
+
+.qsection-header{
+  display:flex;align-items:center;gap:10px;margin:18px 0 10px;
+  font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--blue);
+}
+.qsection-header:first-child{margin-top:0;}
+.qsection-header::after{content:'';flex:1;height:1px;background:var(--border);}
+.section-total{
+  display:flex;justify-content:space-between;align-items:center;gap:10px;
+  padding:8px 14px;margin:-2px 0 16px;border:1px dashed var(--border);border-radius:8px;
+  font-size:.8rem;color:var(--text-dim);background:var(--bg);
+}
+.section-total .section-total-label{font-weight:600;color:var(--text-dim);}
+.section-total .section-total-val{font-weight:700;color:var(--text);}
 .view-form-btn{padding:3px 7px;}
 .fv-options{display:flex;flex-direction:column;gap:7px;margin:14px 0;}
 .fv-opt{display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:.9rem;}
@@ -1310,6 +1365,7 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
             <div class="t" id="g-submitted"></div>
           </div>
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            <span class="score-total" id="score-total"></span>
             <span class="wrong-count" id="wrong-count">0 marked wrong</span>
             <button class="link-btn neutral" id="clear-marks-btn" title="Unmark every question in this exam">Clear marks</button>
             <button class="link-btn" id="discard-btn">Discard without grading</button>
@@ -1437,6 +1493,7 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 <script>
 let currentResponse = null;   // {response_id, username, questions:[{id,title,answer}]}
 let wrongIds = new Set();
+let syncedScores = {};        // question_id -> score last confirmed pushed to the Form
 let pendingCache = [];
 
 function $(sel){return document.querySelector(sel);}
@@ -1665,6 +1722,8 @@ async function selectResponse(rid){
   }
   currentResponse = data;
   wrongIds = new Set();
+  syncedScores = {};
+  currentResponse.questions.forEach(q=>{ if(q.awarded != null) syncedScores[q.id] = q.awarded; });
   renderGrading();
   loadPending();
   $('#fab').removeAttribute('disabled');
@@ -1679,14 +1738,35 @@ function renderGrading(){
   updateWrongCount();
   const box = $('#questions');
   box.innerHTML='';
+  const sectionCount = new Set(currentResponse.questions.map(q=>q.section_index)).size;
+  const multiSection = sectionCount > 1;
+  let openSectionIndex = null;
+
+  const closeSection = ()=>{
+    if(openSectionIndex === null || !multiSection) return;
+    box.appendChild(el(`<div class="section-total" data-section-index="${openSectionIndex}">
+        <span class="section-total-label">Section total</span>
+        <span class="section-total-val"><span class="stv-got">0</span> / <span class="stv-max">0</span> pts</span>
+      </div>`));
+  };
+
   currentResponse.questions.forEach((q, idx)=>{
+    if(openSectionIndex !== q.section_index){
+      closeSection();
+      openSectionIndex = q.section_index;
+      if(multiSection){
+        const header = el(`<div class="qsection-header"><span class="qsection-header-label"></span></div>`);
+        header.querySelector('.qsection-header-label').textContent = q.section_title || `Section ${q.section_index+1}`;
+        box.appendChild(header);
+      }
+    }
     const hasChoices = !!(q.type && q.options && q.options.length);
-    const row = el(`<div class="qrow" data-id="${q.id}">
+    const row = el(`<div class="qrow" data-id="${q.id}" data-section-index="${q.section_index}">
         <div class="qrow-head">
           <span class="tag">Question ${idx+1}</span>
           <div class="points-edit" title="Points awarded to THIS student for this question">
             <input type="number" class="points-input" min="0" step="1" placeholder="pts" value="${q.awarded != null ? q.awarded : (q.points != null ? q.points : '')}">
-            <button type="button" class="iconbtn points-sync-btn" title="Push this score to the Form for this response">
+            <button type="button" class="iconbtn points-sync-btn" title="Push this score to the Form now">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>
             </button>
             <span class="points-sync-status"></span>
@@ -1728,23 +1808,23 @@ function renderGrading(){
     const pointsInput = row.querySelector('.points-input');
     const syncBtn = row.querySelector('.points-sync-btn');
     const syncStatus = row.querySelector('.points-sync-status');
-    pointsInput.addEventListener('click', (e)=>e.stopPropagation());
-    pointsInput.addEventListener('input', ()=>{
-      syncBtn.classList.remove('is-synced');
-      syncStatus.textContent = '';
-      syncStatus.className = 'points-sync-status';
-    });
-    if(q.awarded != null){
-      syncBtn.classList.add('is-synced');
-      syncStatus.textContent = 'Synced';
-      syncStatus.className = 'points-sync-status ok';
-    }
-    syncBtn.addEventListener('click', async (e)=>{
-      e.stopPropagation();
+    let syncTimer = null;
+
+    // Pushes the current input value to the Form for THIS question, unless
+    // it already matches the last value we confirmed synced. Called on a
+    // short debounce while typing and immediately on blur/manual click, so
+    // scores land on the Form in real time instead of only in one big
+    // batch when "Finish grading" is clicked.
+    const pushNow = async ()=>{
       const val = pointsInput.value;
-      if(val === ''){ toast('Enter a score first', 'error'); return; }
+      if(val === '') return;
       const newScore = parseFloat(val);
-      if(isNaN(newScore) || newScore < 0){ toast('Score must be 0 or more', 'error'); return; }
+      if(isNaN(newScore) || newScore < 0){
+        syncStatus.textContent = 'Invalid';
+        syncStatus.className = 'points-sync-status err';
+        return;
+      }
+      if(syncedScores[q.id] === newScore) return;
       syncBtn.disabled = true;
       syncStatus.textContent = 'Syncing…';
       syncStatus.className = 'points-sync-status';
@@ -1761,10 +1841,10 @@ function renderGrading(){
           return;
         }
         q.awarded = res.score;
+        syncedScores[q.id] = res.score;
         syncBtn.classList.add('is-synced');
         syncStatus.textContent = 'Synced';
         syncStatus.className = 'points-sync-status ok';
-        toast('Score pushed to the Form', 'success');
       }catch(err){
         syncStatus.textContent = 'Failed';
         syncStatus.className = 'points-sync-status err';
@@ -1772,6 +1852,30 @@ function renderGrading(){
       }finally{
         syncBtn.disabled = false;
       }
+    };
+
+    pointsInput.addEventListener('click', (e)=>e.stopPropagation());
+    pointsInput.addEventListener('input', ()=>{
+      syncBtn.classList.remove('is-synced');
+      syncStatus.textContent = '';
+      syncStatus.className = 'points-sync-status';
+      recomputeTotals();
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(pushNow, 700);
+    });
+    pointsInput.addEventListener('blur', ()=>{
+      clearTimeout(syncTimer);
+      pushNow();
+    });
+    if(q.awarded != null){
+      syncBtn.classList.add('is-synced');
+      syncStatus.textContent = 'Synced';
+      syncStatus.className = 'points-sync-status ok';
+    }
+    syncBtn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      clearTimeout(syncTimer);
+      pushNow();
     });
 
     const baseView = row.querySelector('.points-base-view');
@@ -1804,6 +1908,7 @@ function renderGrading(){
       baseView.style.display = 'inline';
       baseEditBtn.style.display = 'inline-flex';
       toast('Point value saved to the Form', 'success');
+      recomputeTotals();
     });
     row.addEventListener('click', ()=>{
       if(wrongIds.has(q.id)){ wrongIds.delete(q.id); row.classList.remove('wrong'); }
@@ -1812,6 +1917,39 @@ function renderGrading(){
     });
     box.appendChild(row);
   });
+  closeSection();
+  recomputeTotals();
+}
+
+// Sums awarded-vs-max points per section (and overall) from what's
+// currently in the score inputs, and writes the totals into the section
+// footers and the header badge. Runs on every points-input change so the
+// totals always reflect what's on screen, even before a score finishes
+// syncing to the Form.
+function recomputeTotals(){
+  if(!currentResponse) return;
+  const pointsMax = {};
+  currentResponse.questions.forEach(q=>{ pointsMax[q.id] = q.points; });
+  const bySection = {};
+  let grandGot = 0, grandMax = 0;
+  $$('.qrow').forEach(row=>{
+    const qid = row.dataset.id;
+    const sectionIdx = row.dataset.sectionIndex;
+    const input = row.querySelector('.points-input');
+    const got = (input && input.value !== '') ? (parseFloat(input.value) || 0) : 0;
+    const max = pointsMax[qid] != null ? pointsMax[qid] : 0;
+    grandGot += got; grandMax += max;
+    const s = bySection[sectionIdx] || (bySection[sectionIdx] = {got:0, max:0});
+    s.got += got; s.max += max;
+  });
+  Object.keys(bySection).forEach(idx=>{
+    const rowEl = $(`.section-total[data-section-index="${idx}"]`);
+    if(!rowEl) return;
+    rowEl.querySelector('.stv-got').textContent = bySection[idx].got;
+    rowEl.querySelector('.stv-max').textContent = bySection[idx].max;
+  });
+  const totalBadge = $('#score-total');
+  if(totalBadge) totalBadge.textContent = grandGot + ' / ' + grandMax + ' pts';
 }
 
 function updateWrongCount(){
@@ -1870,10 +2008,13 @@ window.addEventListener('beforeunload', (e)=>{
 function resetGradingPanel(){
   currentResponse = null;
   wrongIds = new Set();
+  syncedScores = {};
   $('#grading-body').style.display='none';
   $('#grading-skeleton').style.display='none';
   $('#placeholder').style.display='flex';
   $('#fab').setAttribute('disabled','disabled');
+  const totalBadge = $('#score-total');
+  if(totalBadge) totalBadge.textContent = '';
 }
 
 $('#fab').addEventListener('click', ()=>{
@@ -1896,10 +2037,15 @@ async function submitGrade(result){
     .filter(q=>wrongIds.has(q.id))
     .map(q=>q.title);
   const pointsAssigned = {};
+  const alreadySynced = {};
   $$('.qrow').forEach(row=>{
     const qid = row.dataset.id;
     const input = row.querySelector('.points-input');
-    if(input && input.value !== '') pointsAssigned[qid] = parseInt(input.value, 10);
+    if(input && input.value !== ''){
+      const n = parseInt(input.value, 10);
+      pointsAssigned[qid] = n;
+      if(syncedScores[qid] === n) alreadySynced[qid] = n;
+    }
   });
   try{
     const data = await apiPost('/api/grade', {
@@ -1907,6 +2053,7 @@ async function submitGrade(result){
       username: savedResponse.username,
       wrong_questions: wrongTitles,
       points_assigned: pointsAssigned,
+      already_synced: alreadySynced,
       result
     });
     if(data.error){ toast(data.error, 'error'); return; }
