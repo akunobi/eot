@@ -731,6 +731,48 @@ def api_grade():
     if not isinstance(points_assigned, dict):
         points_assigned = {}
 
+    # Finalizing a grade used to only save points_assigned into the LOCAL
+    # ledger below — the Form itself only got updated if the grader had
+    # separately clicked the per-question sync checkmark first. That made
+    # it easy for the web app's record and the actual Form to drift apart.
+    # Push every assigned score to the bridge now too, so finalizing a
+    # grade is enough on its own to keep the Form in sync.
+    sync_errors = []
+    if points_assigned and APPS_SCRIPT_BRIDGE_URL and APPS_SCRIPT_BRIDGE_SECRET:
+        creds = request.google_creds
+        form_id = find_form_id(creds, FORM_TITLE)
+        if not form_id:
+            sync_errors.append(f'Form "{FORM_TITLE}" not found — scores were not pushed to the Form.')
+        else:
+            target = None
+            qmap = {}
+            try:
+                form = get_form(creds, form_id)
+                qmap, _order, _qmeta = question_map(form)
+                responses = list_all_responses(creds, form_id)
+                target = next((r for r in responses if r.get("responseId") == response_id), None)
+            except Exception as exc:  # noqa: BLE001
+                sync_errors.append(f"Could not read the Form to push scores: {exc}")
+
+            if target is None and not sync_errors:
+                sync_errors.append("That response was not found on the Form — scores were not pushed.")
+
+            if target is not None:
+                response_created_time = target.get("createTime")
+                for qid, score in points_assigned.items():
+                    question_title = qmap.get(qid)
+                    if question_title is None:
+                        sync_errors.append(f"Question not found in the Form ({qid}) — score not pushed.")
+                        continue
+                    expected_answer_text = extract_answer_text(target.get("answers", {}).get(qid))
+                    ok, res = push_score_to_bridge(
+                        form_id, response_id, qid, question_title, score,
+                        response_created_time=response_created_time,
+                        expected_answer_text=expected_answer_text,
+                    )
+                    if not ok:
+                        sync_errors.append(f'"{question_title}": {res}')
+
     message = build_message(result, username, wrong_questions)
 
     db = get_db()
@@ -757,7 +799,7 @@ def api_grade():
     db.commit()
     db.close()
 
-    return jsonify({"error": None, "message": message})
+    return jsonify({"error": None, "message": message, "sync_errors": sync_errors or None})
 
 
 @app.route("/api/delete", methods=["POST"])
@@ -1868,6 +1910,9 @@ async function submitGrade(result){
       result
     });
     if(data.error){ toast(data.error, 'error'); return; }
+    if(data.sync_errors && data.sync_errors.length){
+      toast('Grade saved, but ' + data.sync_errors.length + ' score(s) failed to push to the Form: ' + data.sync_errors[0], 'error');
+    }
     $('#msg-title').textContent = result==='fail' ? 'Exam failed' : 'Exam passed';
     $('#msg-text').value = data.message;
     openModal('ov-message');
