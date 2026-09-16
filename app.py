@@ -732,7 +732,12 @@ def api_set_response_score():
     if not ok:
         return jsonify({"error": result}), 502
 
-    return jsonify({"error": None, "score": result.get("score", score)})
+    return jsonify({
+        "error": None,
+        "score": result.get("score", score),
+        "matched_by": result.get("matched_by"),
+        "matched_timestamp": result.get("matched_timestamp"),
+    })
 
 
 @app.route("/api/grade", methods=["POST"])
@@ -1845,6 +1850,10 @@ function renderGrading(){
         syncBtn.classList.add('is-synced');
         syncStatus.textContent = 'Synced';
         syncStatus.className = 'points-sync-status ok';
+        if(res.matched_by){
+          syncStatus.title = 'Matched by: ' + res.matched_by +
+            (res.matched_timestamp ? ('\nResponse timestamp: ' + res.matched_timestamp) : '');
+        }
       }catch(err){
         syncStatus.textContent = 'Failed';
         syncStatus.className = 'points-sync-status err';
