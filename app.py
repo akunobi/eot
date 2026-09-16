@@ -634,7 +634,17 @@ def push_score_to_bridge(form_id, response_id, question_id, question_title, scor
         return False, "The bridge returned something that wasn't valid JSON (check the deployment URL/logs)."
 
     if not result.get("ok"):
-        return False, result.get("error") or "The Form rejected the score."
+        err = result.get("error") or "The Form rejected the score."
+        debug_bits = []
+        for key in (
+            "opened_form_id", "opened_form_title", "requested_response_id",
+            "response_count_on_opened_form", "sample_ids_on_opened_form",
+        ):
+            if key in result:
+                debug_bits.append(f"{key}={result[key]}")
+        if debug_bits:
+            err += " [" + ", ".join(debug_bits) + "]"
+        return False, err
     return True, result
 
 
