@@ -17,6 +17,8 @@ import re
 import json
 import sqlite3
 import secrets
+import urllib.request
+import urllib.error
 from functools import wraps
 from datetime import datetime, timedelta, timezone
 
@@ -52,6 +54,14 @@ GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", _default_redirect_ur
 FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 FORM_TITLE = os.environ.get("FORM_TITLE", "SD EOT Exam")
+
+# Optional: URL + shared secret for the Apps Script "grading bridge" web app.
+# The Forms REST API cannot write a per-response score (only per-question max
+# points, handled by /api/set_points below) — that write only exists through
+# Apps Script's FormApp.submitGrades(). See APPS_SCRIPT_BRIDGE_SETUP.md for
+# how to deploy it. Left blank, /api/set_response_score just returns an error.
+APPS_SCRIPT_BRIDGE_URL = os.environ.get("APPS_SCRIPT_BRIDGE_URL", "").rstrip("/")
+APPS_SCRIPT_BRIDGE_SECRET = os.environ.get("APPS_SCRIPT_BRIDGE_SECRET", "")
 # Render injects PORT automatically and expects the process to listen on 0.0.0.0.
 HOST = os.environ.get("HOST", "0.0.0.0" if IS_RENDER else "127.0.0.1")
 PORT = int(os.environ.get("PORT", os.environ.get("LOCAL_PORT", "5000")))
@@ -496,6 +506,7 @@ def api_response_detail(response_id):
         raw_answer = answers.get(qid)
         answer_text = extract_answer_text(raw_answer)
         meta = qmeta.get(qid, {})
+        grade = (raw_answer or {}).get("grade") or {}
         questions.append({
             "id": qid,
             "title": title,
@@ -504,7 +515,10 @@ def api_response_detail(response_id):
             "options": meta.get("options") or [],  # all options as they appear in the form
             "correct": meta.get("correct"),    # list of correct values, or None if not exposed
             "selected": extract_answer_list(raw_answer),  # raw selected values
-            "points": meta.get("points"),      # current point value in the form, or None
+            "points": meta.get("points"),      # current max point value in the form, or None
+            "awarded": grade.get("score"),     # score currently recorded on THIS response in
+                                                # the Form (read-only via API), or None if never graded
+            "form_correct": grade.get("correct"),  # Forms' own right/wrong flag for this response, or None
         })
 
     return jsonify({
@@ -512,6 +526,7 @@ def api_response_detail(response_id):
         "response_id": response_id,
         "username": username,
         "submitted_at": target.get("lastSubmittedTime") or target.get("createTime") or "",
+        "total_score": target.get("totalScore"),  # sum of awarded scores as Forms currently has it
         "questions": questions,
     })
 
@@ -577,6 +592,88 @@ def api_set_points():
         return jsonify({"error": f"Could not update the form: {exc}"}), 500
 
     return jsonify({"error": None, "points": points})
+
+
+def push_score_to_bridge(form_id, response_id, question_id, question_title, score):
+    """Calls the Apps Script bridge web app to record a per-response score.
+    Returns (ok, result_dict_or_error_string)."""
+    if not APPS_SCRIPT_BRIDGE_URL or not APPS_SCRIPT_BRIDGE_SECRET:
+        return False, (
+            "The Apps Script bridge isn't configured. Set APPS_SCRIPT_BRIDGE_URL and "
+            "APPS_SCRIPT_BRIDGE_SECRET (see APPS_SCRIPT_BRIDGE_SETUP.md)."
+        )
+
+    payload = json.dumps({
+        "secret": APPS_SCRIPT_BRIDGE_SECRET,
+        "form_id": form_id,
+        "response_id": response_id,
+        "question_id": question_id,
+        "question_title": question_title,
+        "score": score,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        APPS_SCRIPT_BRIDGE_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        # Apps Script web apps sometimes 302-redirect through accounts.google.com
+        # when access isn't set to "Anyone" — surface that clearly.
+        return False, f"The bridge returned HTTP {exc.code}. Check the deployment's access setting."
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Could not reach the Apps Script bridge: {exc}"
+
+    try:
+        result = json.loads(body)
+    except (TypeError, ValueError):
+        return False, "The bridge returned something that wasn't valid JSON (check the deployment URL/logs)."
+
+    if not result.get("ok"):
+        return False, result.get("error") or "The Form rejected the score."
+    return True, result
+
+
+@app.route("/api/set_response_score", methods=["POST"])
+@login_required
+def api_set_response_score():
+    """Pushes the points-awarded ('left number') for ONE question on ONE
+    response into the actual Google Form, via the Apps Script bridge (the
+    Forms REST API has no write for this — see push_score_to_bridge)."""
+    data = request.get_json(force=True, silent=True) or {}
+    response_id = data.get("response_id")
+    question_id = data.get("question_id")
+    score = data.get("score")
+
+    if not response_id or not question_id or score is None:
+        return jsonify({"error": "Missing response_id, question_id or score."}), 400
+    try:
+        score = float(score)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Score must be a number."}), 400
+    if score < 0:
+        return jsonify({"error": "Score can't be negative."}), 400
+
+    creds = request.google_creds
+    form_id = find_form_id(creds, FORM_TITLE)
+    if not form_id:
+        return jsonify({"error": f'Form "{FORM_TITLE}" not found.'}), 404
+
+    form = get_form(creds, form_id)
+    qmap, _order, _qmeta = question_map(form)
+    question_title = qmap.get(question_id)
+    if question_title is None:
+        return jsonify({"error": "That question was not found in the form."}), 404
+
+    ok, result = push_score_to_bridge(form_id, response_id, question_id, question_title, score)
+    if not ok:
+        return jsonify({"error": result}), 502
+
+    return jsonify({"error": None, "score": result.get("score", score)})
 
 
 @app.route("/api/grade", methods=["POST"])
@@ -881,6 +978,11 @@ header.top .sub{color:var(--text-dim);font-size:.9rem;margin-top:4px;}
 .points-base-view{color:var(--text-dim);font-size:.8rem;font-weight:600;}
 .points-base-input{width:34px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:2px 4px;font-size:.78rem;}
 .points-base-wrap .iconbtn{padding:2px 4px;}
+.points-sync-btn{padding:2px 4px;}
+.points-sync-btn.is-synced{color:#2fae5c;}
+.points-sync-status{font-size:.68rem;color:var(--text-dim);margin-left:2px;white-space:nowrap;}
+.points-sync-status.ok{color:#2fae5c;}
+.points-sync-status.err{color:#e5484d;}
 
 .qsection{margin-bottom:10px;}
 .qsection:last-child{margin-bottom:0;}
@@ -1500,12 +1602,16 @@ function renderGrading(){
     const row = el(`<div class="qrow" data-id="${q.id}">
         <div class="qrow-head">
           <span class="tag">Question ${idx+1}</span>
-          <div class="points-edit" title="Points assigned for this response — a personal note, not sent to the Form">
-            <input type="number" class="points-input" min="0" step="1" placeholder="pts" value="${q.points != null ? q.points : ''}">
+          <div class="points-edit" title="Points awarded to THIS student for this question">
+            <input type="number" class="points-input" min="0" step="1" placeholder="pts" value="${q.awarded != null ? q.awarded : (q.points != null ? q.points : '')}">
+            <button type="button" class="iconbtn points-sync-btn" title="Push this score to the Form for this response">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>
+            </button>
+            <span class="points-sync-status"></span>
             <div class="points-base-wrap">
               <span class="points-base-view">/<span class="points-base-value">${q.points != null ? q.points : '—'}</span></span>
               <input type="number" class="points-base-input" min="0" step="1" value="${q.points != null ? q.points : ''}" style="display:none;">
-              <button type="button" class="iconbtn points-base-edit" title="Edit the real point value in the Form">
+              <button type="button" class="iconbtn points-base-edit" title="Edit the max point value for this question in the Form (affects every response)">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
               </button>
               <button type="button" class="iconbtn points-base-save" title="Push this value to the Form (changes it for everyone)" style="display:none;">
@@ -1538,7 +1644,53 @@ function renderGrading(){
       });
     }
     const pointsInput = row.querySelector('.points-input');
+    const syncBtn = row.querySelector('.points-sync-btn');
+    const syncStatus = row.querySelector('.points-sync-status');
     pointsInput.addEventListener('click', (e)=>e.stopPropagation());
+    pointsInput.addEventListener('input', ()=>{
+      syncBtn.classList.remove('is-synced');
+      syncStatus.textContent = '';
+      syncStatus.className = 'points-sync-status';
+    });
+    if(q.awarded != null){
+      syncBtn.classList.add('is-synced');
+      syncStatus.textContent = 'Synced';
+      syncStatus.className = 'points-sync-status ok';
+    }
+    syncBtn.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      const val = pointsInput.value;
+      if(val === ''){ toast('Enter a score first', 'error'); return; }
+      const newScore = parseFloat(val);
+      if(isNaN(newScore) || newScore < 0){ toast('Score must be 0 or more', 'error'); return; }
+      syncBtn.disabled = true;
+      syncStatus.textContent = 'Syncing…';
+      syncStatus.className = 'points-sync-status';
+      try{
+        const res = await apiPost('/api/set_response_score', {
+          response_id: currentResponse.response_id,
+          question_id: q.id,
+          score: newScore
+        });
+        if(res.error){
+          syncStatus.textContent = 'Failed';
+          syncStatus.className = 'points-sync-status err';
+          toast(res.error, 'error');
+          return;
+        }
+        q.awarded = res.score;
+        syncBtn.classList.add('is-synced');
+        syncStatus.textContent = 'Synced';
+        syncStatus.className = 'points-sync-status ok';
+        toast('Score pushed to the Form', 'success');
+      }catch(err){
+        syncStatus.textContent = 'Failed';
+        syncStatus.className = 'points-sync-status err';
+        if(err.message !== 'auth') toast("Couldn't reach the server — check your connection.", 'error');
+      }finally{
+        syncBtn.disabled = false;
+      }
+    });
 
     const baseView = row.querySelector('.points-base-view');
     const baseValueSpan = row.querySelector('.points-base-value');
