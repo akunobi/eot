@@ -594,21 +594,31 @@ def api_set_points():
     return jsonify({"error": None, "points": points})
 
 
-def push_score_to_bridge(form_id, response_id, question_id, question_title, score, response_created_time=None):
+def push_score_to_bridge(form_id, response_id, question_id, question_title, score,
+                          response_created_time=None, expected_answer_text=None):
+    """Calls the Apps Script bridge web app to record a per-response score.
+    Returns (ok, result_dict_or_error_string).
+
+    response_created_time / expected_answer_text are required in practice:
+    the REST API's responseId and Apps Script's FormApp response IDs live in
+    different ID spaces, so the bridge falls back to matching by submission
+    timestamp (and, if needed, by the text of this answer) — see bridge.gs.
+    """
     if not APPS_SCRIPT_BRIDGE_URL or not APPS_SCRIPT_BRIDGE_SECRET:
         return False, (
             "The Apps Script bridge isn't configured. Set APPS_SCRIPT_BRIDGE_URL and "
-            "APPS_SCRIPT_BRIDGE_SECRET."
+            "APPS_SCRIPT_BRIDGE_SECRET (see APPS_SCRIPT_BRIDGE_SETUP.md)."
         )
 
     payload = json.dumps({
         "secret": APPS_SCRIPT_BRIDGE_SECRET,
         "form_id": form_id,
         "response_id": response_id,
-        "response_created_time": response_created_time,  # <--- ENVÍA LA FECHA PARA EL FALLBACK
         "question_id": question_id,
         "question_title": question_title,
         "score": score,
+        "response_created_time": response_created_time,
+        "expected_answer_text": expected_answer_text,
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -621,17 +631,28 @@ def push_score_to_bridge(form_id, response_id, question_id, question_title, scor
         with urllib.request.urlopen(req, timeout=25) as resp:
             body = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
+        # Apps Script web apps sometimes 302-redirect through accounts.google.com
+        # when access isn't set to "Anyone" — surface that clearly.
         return False, f"The bridge returned HTTP {exc.code}. Check the deployment's access setting."
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return False, f"Could not reach the Apps Script bridge: {exc}"
 
     try:
         result = json.loads(body)
     except (TypeError, ValueError):
-        return False, "The bridge returned something that wasn't valid JSON."
+        return False, "The bridge returned something that wasn't valid JSON (check the deployment URL/logs)."
 
     if not result.get("ok"):
         err = result.get("error") or "The Form rejected the score."
+        debug_bits = []
+        for key in (
+            "opened_form_id", "opened_form_title", "requested_response_id",
+            "response_count_on_opened_form", "sample_ids_on_opened_form",
+        ):
+            if key in result:
+                debug_bits.append(f"{key}={result[key]}")
+        if debug_bits:
+            err += " [" + ", ".join(debug_bits) + "]"
         return False, err
     return True, result
 
@@ -639,6 +660,9 @@ def push_score_to_bridge(form_id, response_id, question_id, question_title, scor
 @app.route("/api/set_response_score", methods=["POST"])
 @login_required
 def api_set_response_score():
+    """Pushes the points-awarded ('left number') for ONE question on ONE
+    response into the actual Google Form, via the Apps Script bridge (the
+    Forms REST API has no write for this — see push_score_to_bridge)."""
     data = request.get_json(force=True, silent=True) or {}
     response_id = data.get("response_id")
     question_id = data.get("question_id")
@@ -650,16 +674,13 @@ def api_set_response_score():
         score = float(score)
     except (TypeError, ValueError):
         return jsonify({"error": "Score must be a number."}), 400
+    if score < 0:
+        return jsonify({"error": "Score can't be negative."}), 400
 
     creds = request.google_creds
     form_id = find_form_id(creds, FORM_TITLE)
     if not form_id:
         return jsonify({"error": f'Form "{FORM_TITLE}" not found.'}), 404
-
-    # Obtener la fecha de la respuesta para el fallback de Apps Script
-    responses = list_all_responses(creds, form_id)
-    target = next((r for r in responses if r.get("responseId") == response_id), None)
-    created_time = (target.get("lastSubmittedTime") or target.get("createTime")) if target else None
 
     form = get_form(creds, form_id)
     qmap, _order, _qmeta = question_map(form)
@@ -667,7 +688,28 @@ def api_set_response_score():
     if question_title is None:
         return jsonify({"error": "That question was not found in the form."}), 404
 
-    ok, result = push_score_to_bridge(form_id, response_id, question_id, question_title, score, response_created_time=created_time)
+    # The bridge can't resolve response_id directly (REST API and Apps
+    # Script use different ID spaces for the same response — see
+    # bridge.gs), so it falls back to matching by submission timestamp,
+    # disambiguating with the answer text if needed. Look both up here
+    # from the same REST API response the UI already showed the grader.
+    try:
+        responses = list_all_responses(creds, form_id)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+
+    target = next((r for r in responses if r.get("responseId") == response_id), None)
+    if not target:
+        return jsonify({"error": "That response was not found (it may no longer exist)."}), 404
+
+    response_created_time = target.get("createTime")
+    expected_answer_text = extract_answer_text(target.get("answers", {}).get(question_id))
+
+    ok, result = push_score_to_bridge(
+        form_id, response_id, question_id, question_title, score,
+        response_created_time=response_created_time,
+        expected_answer_text=expected_answer_text,
+    )
     if not ok:
         return jsonify({"error": result}), 502
 
