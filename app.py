@@ -1852,7 +1852,7 @@ function renderGrading(){
         syncStatus.className = 'points-sync-status ok';
         if(res.matched_by){
           syncStatus.title = 'Matched by: ' + res.matched_by +
-            (res.matched_timestamp ? ('\nResponse timestamp: ' + res.matched_timestamp) : '');
+            (res.matched_timestamp ? (' | Response timestamp: ' + res.matched_timestamp) : '');
         }
       }catch(err){
         syncStatus.textContent = 'Failed';
