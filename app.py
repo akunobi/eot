@@ -955,6 +955,11 @@ INDEX_HTML = """<!DOCTYPE html>
   --card-border:var(--border);
   --divider:rgba(15,23,42,.10);
   --font-ui:"Inter","Manrope",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --ease:cubic-bezier(0.16,1,0.3,1);
+  --spring:cubic-bezier(.34,1.56,.64,1);
+  --glass-bg:rgba(255,255,255,.62);
+  --glass-border:rgba(255,255,255,.55);
+  --glow-blue:0 8px 26px -10px var(--blue-soft);
 }
 [data-theme="dark"]{
   --bg:#090B10;
@@ -981,6 +986,8 @@ INDEX_HTML = """<!DOCTYPE html>
   --card-glow:none;
   --card-border:rgba(255,255,255,.06);
   --divider:rgba(255,255,255,.09);
+  --glass-bg:rgba(15,18,26,.58);
+  --glass-border:rgba(255,255,255,.07);
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
@@ -998,18 +1005,59 @@ body{
 h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.01em;}
 button,textarea,input{font-family:inherit;}
 :focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px;}
-@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important;}}
+@media (prefers-reduced-motion: reduce){
+  *{animation:none!important;transition:none!important;}
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*){animation:none!important;}
+}
 
-/* ---------- theme toggle ---------- */
+/* ---------- ambient background (gradient mesh + grain + parallax) ---------- */
+.ambient-bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;}
+.ambient-parallax{position:absolute;inset:-4%;transform:translate3d(0, var(--parallax-y, 0px), 0);will-change:transform;}
+.ambient-bg .blob{position:absolute;border-radius:50%;filter:blur(70px);will-change:transform;}
+.ambient-bg .blob-1{width:640px;height:640px;left:-160px;top:-200px;background:radial-gradient(circle, var(--atmos-1), transparent 70%);animation:driftA 26s var(--ease) infinite alternate;}
+.ambient-bg .blob-2{width:520px;height:520px;right:-160px;top:8%;background:radial-gradient(circle, var(--atmos-2), transparent 70%);animation:driftB 32s var(--ease) infinite alternate;}
+.ambient-bg .blob-3{width:460px;height:460px;left:18%;bottom:-220px;background:radial-gradient(circle, var(--atmos-1), transparent 70%);animation:driftC 29s var(--ease) infinite alternate;}
+@keyframes driftA{from{transform:translate3d(0,0,0);}to{transform:translate3d(70px,50px,0);}}
+@keyframes driftB{from{transform:translate3d(0,0,0);}to{transform:translate3d(-60px,60px,0);}}
+@keyframes driftC{from{transform:translate3d(0,0,0);}to{transform:translate3d(45px,-55px,0);}}
+.ambient-bg .grain{
+  position:absolute;inset:-10%;opacity:.035;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  background-size:140px 140px;
+}
+[data-theme="dark"] .ambient-bg .grain{opacity:.05;}
+@media (prefers-reduced-motion: reduce){.ambient-bg .blob{animation:none;}}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
+  .panel{background:var(--surface)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
+}
+
+/* ---------- view transitions (login <-> dashboard, switching attempts) ---------- */
+::view-transition-old(root){animation:vtOut .28s var(--ease) both;}
+::view-transition-new(root){animation:vtIn .32s var(--ease) both;}
+@keyframes vtOut{to{opacity:0;transform:translateY(-6px);}}
+@keyframes vtIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+
+/* ---------- theme toggle (dashboard) ---------- */
 .theme-toggle{
   position:fixed;top:26px;right:30px;z-index:70;
   width:32px;height:32px;border-radius:50%;
   background:transparent;border:1px solid transparent;color:var(--text-dim);
   display:flex;align-items:center;justify-content:center;cursor:pointer;
-  transition:background-color .15s, border-color .15s, color .15s;
+  transition:background-color .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease), transform 160ms var(--spring);
 }
 .theme-toggle.in-header{position:static;top:auto;right:auto;z-index:auto;margin-left:4px;}
 .theme-toggle:hover{background:var(--surface-hover);color:var(--text);}
+.theme-toggle:active,.sound-toggle:active{transform:scale(.97);}
+.sound-toggle{
+  position:static;width:32px;height:32px;border-radius:50%;margin-left:4px;
+  background:transparent;border:1px solid transparent;color:var(--text-dim);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:background-color .15s var(--ease), color .15s var(--ease), transform 160ms var(--spring);
+}
+.sound-toggle:hover{background:var(--surface-hover);color:var(--text);}
+.sound-toggle .icon-sound-off{display:none;}
+.sound-toggle.is-off .icon-sound-on{display:none;}
+.sound-toggle.is-off .icon-sound-off{display:flex;}
 .theme-toggle .icon-moon{display:none;}
 [data-theme="dark"] .theme-toggle .icon-sun{display:none;}
 [data-theme="dark"] .theme-toggle .icon-moon{display:block;}
@@ -1020,6 +1068,7 @@ button,textarea,input{font-family:inherit;}
   height:100vh;height:100dvh;
   padding:22px 30px calc(18px + env(safe-area-inset-bottom));
   display:grid;grid-template-rows:auto 1fr auto;gap:22px;
+  position:relative;z-index:1;
 }
 header.top{
   display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;
@@ -1041,15 +1090,29 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 .grid{display:grid;grid-template-columns:300px 1fr;gap:28px;align-items:stretch;min-height:0;}
 @media (max-width:820px){.grid{grid-template-columns:1fr;}.app{height:auto;min-height:100vh;min-height:100dvh;}}
 
-.panel{background:transparent;border:none;border-radius:var(--radius);padding:0;box-shadow:none;transition:background-color .15s, border-color .15s;display:flex;flex-direction:column;min-height:0;}
-#grading-panel{background:var(--surface);border:1px solid var(--card-border);padding:22px;box-shadow:var(--shadow);}
-.recent-panel{max-height:34vh;margin-top:2px;padding-top:20px;border-top:1px solid var(--divider);}
+.panel{
+  background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius);
+  padding:18px 20px;box-shadow:var(--shadow);
+  backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
+  transition:background-color .2s var(--ease), border-color .2s var(--ease), box-shadow .2s var(--ease);
+  display:flex;flex-direction:column;min-height:0;
+}
+#grading-panel{background:var(--glass-bg);border:1px solid var(--glass-border);padding:22px;box-shadow:var(--shadow);}
+.recent-panel{max-height:34vh;margin-top:20px;}
 .recent-panel #recent-list{overflow-y:auto;}
-#pending-list{flex:1;min-height:0;overflow-y:auto;padding-right:2px;}
-.panel h2{font-size:.875rem;font-weight:600;color:var(--text);margin:0 0 12px;display:flex;justify-content:space-between;align-items:center;}
+#pending-list{flex:1;min-height:0;overflow-y:auto;padding-right:2px;position:relative;}
+.panel h2{font-size:.875rem;font-weight:600;color:var(--text);margin:0 0 12px;display:flex;justify-content:space-between;align-items:center;animation:headIn .45s var(--ease) both;}
 .panel h2 .count{
   color:var(--blue);font-weight:600;font-size:.72rem;background:var(--blue-dim);
   border-radius:20px;padding:2px 9px;
+}
+
+/* sliding selection indicator: replaces a static per-item border with one
+   shared bar that animates to whichever pending item is active. */
+.pending-indicator{
+  position:absolute;left:0;width:2px;border-radius:2px;background:var(--blue);
+  top:0;height:0;opacity:0;pointer-events:none;
+  transition:transform .3s var(--ease), height .3s var(--ease), opacity .2s var(--ease);
 }
 
 /* ---------- pending list ---------- */
@@ -1057,12 +1120,12 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
   display:flex;align-items:center;gap:10px;
   border-left:2px solid transparent;border-radius:0 6px 6px 0;
   padding:9px 10px 9px 8px;margin-bottom:1px;
-  cursor:pointer;transition:background 150ms ease, transform 150ms ease, border-color 150ms ease;
+  cursor:pointer;transition:background 150ms var(--ease), transform 200ms var(--spring), border-color 150ms var(--ease), box-shadow 200ms var(--ease);
 }
-.pending-item:hover{background:var(--surface-hover);transform:translateX(2px);}
-.pending-item.active{background:var(--blue-dim);border-left-color:var(--blue);}
+.pending-item:hover{background:var(--surface-hover);transform:translateX(2px);box-shadow:0 4px 16px -8px var(--blue-soft);}
+.pending-item.active{background:var(--blue-dim);border-left-color:transparent;transform:translateY(-1px);box-shadow:0 6px 18px -8px var(--blue-soft);}
 .pending-item.active .u{color:var(--blue);}
-.pending-item:active{transform:scale(.99);}
+.pending-item:active{transform:scale(.97);}
 .pending-item .pi-info{flex:1;min-width:0;display:flex;align-items:baseline;gap:7px;}
 .pending-item .u{color:var(--text);font-weight:600;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .pending-item .attempt-tag{color:var(--text-dim);font-weight:500;font-size:.78rem;flex:none;}
@@ -1079,10 +1142,16 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 }
 
 /* ---------- urgency dots ---------- */
-.tdot{width:6px;height:6px;border-radius:50%;flex:none;display:inline-block;}
+.tdot{width:6px;height:6px;border-radius:50%;flex:none;display:inline-block;position:relative;}
 .tdot.ok{background:var(--green);}
-.tdot.warn{background:var(--amber);}
-.tdot.urgent{background:var(--red);}
+.tdot.warn{background:var(--amber);color:var(--amber);}
+.tdot.urgent{background:var(--red);color:var(--red);}
+.tdot.warn::after, .tdot.urgent::after{
+  content:'';position:absolute;inset:-4px;border-radius:50%;background:currentColor;
+  animation:dotPulse 1.8s ease-out infinite;
+}
+.tdot.urgent::after{animation-duration:1.2s;}
+@keyframes dotPulse{0%{transform:scale(.5);opacity:.5;}70%{transform:scale(1.9);opacity:0;}100%{opacity:0;}}
 
 /* ---------- loading skeletons ---------- */
 @keyframes shimmer{0%{background-position:-220px 0;}100%{background-position:calc(220px + 100%) 0;}}
@@ -1094,8 +1163,14 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 @media (prefers-reduced-motion: reduce){.skeleton{animation:none;opacity:.6;}}
 
 /* ---------- entrance animation for list rows ---------- */
-@keyframes itemIn{from{opacity:0;transform:translateY(3px);}to{opacity:1;transform:translateY(0);}}
-.pending-item,.recent-item{animation:itemIn .16s ease both;}
+@keyframes itemIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+.pending-item,.recent-item{animation:itemIn .32s var(--ease) both;animation-delay:var(--stagger, 0ms);}
+@keyframes headIn{from{opacity:0;letter-spacing:.06em;}to{opacity:1;letter-spacing:-.01em;}}
+@keyframes kbdFlash{
+  0%{box-shadow:0 0 0 2px var(--blue) inset, 0 0 0 6px var(--blue-soft);}
+  100%{box-shadow:0 0 0 0 transparent, 0 0 0 0 transparent;}
+}
+.kbd-flash{animation:kbdFlash .5s var(--ease);}
 
 /* ---------- small status affordances ---------- */
 .unsaved-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);display:inline-block;margin-left:7px;vertical-align:middle;}
@@ -1114,21 +1189,36 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 #grading-body{display:flex;flex-direction:column;flex:1;min-height:0;}
 #questions{flex:1;overflow-y:auto;padding-right:2px;}
 .grading-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;flex-wrap:wrap;flex:none;}
-.grading-head .u{font-size:1.15rem;font-weight:600;}
+.grading-head .u{font-size:1.15rem;font-weight:600;animation:headIn .4s var(--ease) both;}
 .grading-head .t{color:var(--text-dim);font-size:.85rem;margin-top:3px;}
 .link-btn{background:none;border:none;color:var(--text-dim);text-decoration:underline;cursor:pointer;font-size:.85rem;padding:0;}
 .link-btn:hover{color:var(--red);}
 .link-btn.neutral:hover{color:var(--blue);}
 
 .qrow{
+  position:relative;overflow:hidden;
+  background:var(--card);
   border:1px solid var(--border);border-left:2px solid transparent;border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:8px;
-  cursor:pointer;transition:background 150ms ease, border-color 150ms ease;
+  cursor:pointer;transition:border-color 200ms var(--ease), box-shadow 200ms var(--ease), transform 160ms var(--spring);
 }
-.qrow:hover{background:var(--surface-hover);}
-.qrow.wrong{border-left-color:var(--red);border-color:var(--red-dim);background:var(--red-dim);}
+.qrow::before{
+  content:'';position:absolute;inset:0;background:var(--red-dim);
+  transform:scaleX(0);transform-origin:left;transition:transform .32s var(--ease);z-index:0;pointer-events:none;
+}
+.qrow.wrong::before{transform:scaleX(1);}
+.qrow > *{position:relative;z-index:1;}
+.qrow:hover{background:var(--surface-hover);box-shadow:var(--glow-blue);}
+.qrow:active{transform:scale(.985);}
+.qrow.wrong{border-left-color:var(--red);border-color:var(--red-dim);}
 
 .qrow-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;}
-.qrow .tag{font-size:.76rem;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:.03em;}
+.qrow .tag{font-size:.76rem;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:.03em;display:flex;align-items:center;gap:7px;}
+.qstatus-icon{position:relative;width:14px;height:14px;flex:none;display:inline-block;}
+.qstatus-icon svg{position:absolute;inset:0;transition:opacity .25s var(--ease), transform .25s var(--ease);}
+.qstatus-icon .qs-check{opacity:1;transform:scale(1) rotate(0deg);color:var(--text-dim);}
+.qstatus-icon .qs-x{opacity:0;transform:scale(.4) rotate(-40deg);color:var(--red);}
+.qrow.wrong .qstatus-icon .qs-check{opacity:0;transform:scale(.4) rotate(40deg);}
+.qrow.wrong .qstatus-icon .qs-x{opacity:1;transform:scale(1) rotate(0deg);}
 .qrow .wrong-flag{display:none;font-size:.8rem;font-weight:600;color:var(--red);flex:none;}
 .qrow.wrong .wrong-flag{display:inline;}
 .points-edit{display:flex;align-items:center;gap:5px;}
@@ -1164,7 +1254,11 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 .section-total .section-total-val{font-weight:700;color:var(--text);}
 .view-form-btn{padding:3px 7px;}
 .fv-options{display:flex;flex-direction:column;gap:7px;margin:14px 0;}
-.fv-opt{display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:.9rem;}
+.fv-opt{
+  display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:.9rem;
+  opacity:0;transform:translateY(4px);animation:fvIn .28s var(--ease) both;animation-delay:var(--stagger, 0ms);
+}
+@keyframes fvIn{to{opacity:1;transform:translateY(0);}}
 .fv-opt .fv-mark{width:16px;flex:none;text-align:center;color:var(--text-dim);}
 .fv-selected{border-color:var(--text-dim);}
 .fv-right{border-color:var(--green);background:var(--green-dim);color:var(--green);}
@@ -1208,8 +1302,9 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 .badge{font-size:.74rem;font-weight:600;padding:3px 9px;border-radius:20px;}
 .badge.pass{color:var(--green);background:var(--green-dim);}
 .badge.fail{color:var(--red);background:var(--red-dim);}
-.iconbtn{background:none;border:1px solid transparent;border-radius:var(--radius-sm);color:var(--text-dim);padding:6px 8px;cursor:pointer;display:inline-flex;transition:background 150ms ease, color 150ms ease;}
+.iconbtn{background:none;border:1px solid transparent;border-radius:var(--radius-sm);color:var(--text-dim);padding:6px 8px;cursor:pointer;display:inline-flex;transition:background 150ms var(--ease), color 150ms var(--ease), transform 160ms var(--spring);}
 .iconbtn:hover{background:var(--surface-hover);color:var(--blue);}
+.iconbtn:active{transform:scale(.97);}
 
 /* ---------- grading toolbar & finish button ---------- */
 .grading-toolbar{
@@ -1222,9 +1317,10 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
   background:var(--blue);color:#fff;border:none;border-radius:var(--radius-sm);
   padding:10px 18px;font-size:.85rem;font-weight:600;cursor:pointer;
   box-shadow:0 1px 2px rgba(0,0,0,.15);
-  transition:opacity .15s, transform .15s, filter .15s;
+  transition:opacity .15s var(--ease), transform 160ms var(--spring), filter .15s var(--ease), box-shadow .2s var(--ease);
 }
-.fab:hover{filter:brightness(1.1);}
+.fab:hover{filter:brightness(1.1);box-shadow:0 6px 20px -6px var(--blue-soft), 0 1px 2px rgba(0,0,0,.15);}
+.fab:active{transform:scale(.97);}
 .fab[disabled]{opacity:.35;pointer-events:none;box-shadow:none;}
 
 @media (max-width:480px){
@@ -1243,9 +1339,10 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
   border-radius:var(--radius-sm);
   padding:7px 12px;cursor:pointer;
   font-size:.85rem;font-weight:500;
-  transition:background-color .15s, color .15s, opacity .15s;
+  transition:background-color .15s var(--ease), color .15s var(--ease), opacity .15s var(--ease), transform 160ms var(--spring);
 }
 .doc-tab:hover{color:var(--text);background:var(--surface-hover);}
+.doc-tab:active{transform:scale(.97);}
 .doc-tab svg{flex:none;}
 .doc-tab.hidden{opacity:.4;}
 
@@ -1289,9 +1386,10 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 .btn{
   font-size:.85rem;font-weight:600;
   padding:10px 16px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);cursor:pointer;flex:1;
-  transition:background-color .15s, border-color .15s, filter .15s;
+  transition:background-color .15s var(--ease), border-color .15s var(--ease), filter .15s var(--ease), box-shadow .2s var(--ease), transform 160ms var(--spring);
 }
-.btn:hover{background:var(--surface-hover);}
+.btn:hover{background:var(--surface-hover);box-shadow:var(--glow-blue);}
+.btn:active{transform:scale(.97);}
 .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff;}
 .btn.primary:hover{filter:brightness(1.1);}
 .btn.ghost{color:var(--text-dim);}
@@ -1307,47 +1405,80 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 .toast{
   position:fixed;left:24px;bottom:24px;z-index:60;background:var(--toast-bg);
   color:var(--toast-text);border-radius:var(--radius-sm);padding:10px 16px;font-size:.85rem;opacity:0;transform:translateY(8px);
-  transition:.2s;pointer-events:none;box-shadow:var(--shadow-float);
+  transition:opacity .2s var(--ease), transform .2s var(--ease);pointer-events:none;box-shadow:var(--shadow-float);
 }
 .toast.show{opacity:1;transform:translateY(0);}
 
 /* ---------- home / sign-in ---------- */
 :root{--atmos-1:rgba(62,94,235,.08);--atmos-2:rgba(21,143,82,.06);}
 [data-theme="dark"]{--atmos-1:rgba(65,95,180,.16);--atmos-2:rgba(20,110,80,.14);}
-.home-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative;overflow:hidden;}
-.home-wrap::before{
-  content:"";position:absolute;inset:0;
-  background:radial-gradient(circle at 20% 10%, var(--atmos-1), transparent 35%),
-             radial-gradient(circle at 75% 20%, var(--atmos-2), transparent 35%),
-             var(--bg);
-  pointer-events:none;
-}
+.home-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative;z-index:1;overflow:hidden;}
 .home-card{
   position:relative;z-index:1;width:100%;max-width:360px;text-align:center;
-  background:var(--surface);border:1px solid var(--card-border);border-radius:14px;
+  background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:14px;
+  backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
   padding:36px 30px 30px;box-shadow:var(--shadow-float);
+  animation:cardIn .5s var(--ease) both;
 }
+@keyframes cardIn{from{opacity:0;transform:translateY(10px) scale(.985);}to{opacity:1;transform:translateY(0) scale(1);}}
 .home-badge{
   width:48px;height:48px;border-radius:12px;margin:0 auto 18px;
   display:flex;align-items:center;justify-content:center;
   background:var(--blue-dim);color:var(--blue);
 }
-.home-card h1{font-size:1.15rem;font-weight:600;margin-bottom:8px;}
+.home-card h1{font-size:1.15rem;font-weight:600;margin-bottom:8px;animation:headIn .5s var(--ease) both;}
 .home-card p{color:var(--text-dim);font-size:.85rem;line-height:1.5;margin:0 0 26px;}
 .google-btn{
   display:flex;align-items:center;justify-content:center;gap:10px;
   width:100%;padding:12px 18px;border-radius:var(--radius-sm);border:1px solid var(--border);
   background:var(--surface);color:var(--text);font-weight:600;font-size:.88rem;
-  text-decoration:none;transition:border-color .15s, box-shadow .15s, transform .15s;
+  text-decoration:none;transition:border-color .15s var(--ease), box-shadow .15s var(--ease), transform 160ms var(--spring);
 }
 .google-btn:hover{border-color:var(--blue);box-shadow:0 4px 14px var(--blue-soft);transform:translateY(-1px);}
+.google-btn:active{transform:translateY(-1px) scale(.97);}
 .home-links{margin-top:22px;font-size:.78rem;color:var(--text-dim);}
 .home-links a{color:var(--text-dim);text-decoration:none;}
 .home-links a:hover{color:var(--blue);text-decoration:underline;}
 .home-links span{margin:0 6px;}
+
+/* ---------- score ring ---------- */
+.score-ring-wrap{display:flex;align-items:center;gap:8px;}
+.score-ring{transform:rotate(-90deg);flex:none;}
+.score-ring-bg{fill:none;stroke:var(--border);stroke-width:3;}
+.score-ring-fg{
+  fill:none;stroke:var(--blue);stroke-width:3;stroke-linecap:round;
+  stroke-dasharray:69.12;stroke-dashoffset:69.12;
+  transition:stroke-dashoffset .6s var(--ease);
+}
+
+/* ---------- completion celebration ---------- */
+.grade-burst{
+  position:fixed;left:50%;top:50%;z-index:90;color:var(--green);pointer-events:none;
+  opacity:0;transform:translate(-50%,-50%) scale(.3);
+  animation:burstPop .8s var(--ease) forwards;
+}
+.grade-burst::before{
+  content:'';position:absolute;left:50%;top:50%;width:80px;height:80px;margin:-40px 0 0 -40px;
+  border-radius:50%;background:radial-gradient(circle, var(--green-dim), transparent 70%);z-index:-1;
+}
+@keyframes burstPop{
+  0%{opacity:0;transform:translate(-50%,-50%) scale(.3);}
+  35%{opacity:1;transform:translate(-50%,-50%) scale(1.15);}
+  60%{opacity:1;transform:translate(-50%,-50%) scale(1);}
+  100%{opacity:0;transform:translate(-50%,-50%) scale(1);}
+}
 </style>
 </head>
 <body>
+
+<div class="ambient-bg" aria-hidden="true">
+  <div class="ambient-parallax">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+  <div class="grain"></div>
+</div>
 
 <button class="theme-toggle" id="theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
   <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
@@ -1368,6 +1499,10 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
       <span class="acct-sep" aria-hidden="true"></span>
       <span id="acct-email" class="acct-email">&nbsp;</span>
       <button id="logout-btn">Log out</button>
+      <button class="sound-toggle" id="sound-toggle" title="Toggle interface sound" aria-label="Toggle interface sound">
+        <svg class="icon-sound-on" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+        <svg class="icon-sound-off" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M23 9l-6 6M17 9l6 6"/></svg>
+      </button>
       <button class="theme-toggle in-header" title="Toggle dark mode" aria-label="Toggle dark mode">
         <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
         <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -1410,7 +1545,13 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
             <div class="t" id="g-submitted"></div>
           </div>
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-            <span class="score-total" id="score-total"></span>
+            <div class="score-ring-wrap">
+              <svg class="score-ring" width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+                <circle class="score-ring-bg" cx="14" cy="14" r="11"></circle>
+                <circle class="score-ring-fg" id="score-ring-fg" cx="14" cy="14" r="11"></circle>
+              </svg>
+              <span class="score-total" id="score-total"></span>
+            </div>
             <span class="wrong-count" id="wrong-count">0 marked wrong</span>
             <button class="link-btn neutral" id="clear-marks-btn" title="Unmark every question in this exam">Clear marks</button>
             <button class="link-btn" id="discard-btn">Discard without grading</button>
@@ -1545,6 +1686,71 @@ function $(sel){return document.querySelector(sel);}
 function $$(sel){return Array.from(document.querySelectorAll(sel));}
 function el(html){const t=document.createElement('template');t.innerHTML=html.trim();return t.content.firstChild;}
 
+function prefersReducedMotion(){
+  try{ return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){ return false; }
+}
+
+// Wraps a DOM-mutating callback in the View Transitions API when it's
+// available and the person hasn't asked for reduced motion, so screen
+// changes (login <-> dashboard, switching exam attempts) cross-fade instead
+// of jumping. Falls back to calling fn() directly everywhere else.
+function withViewTransition(fn){
+  if(document.startViewTransition && !prefersReducedMotion()){
+    document.startViewTransition(fn);
+  } else {
+    fn();
+  }
+}
+
+/* ---------- subtle interface sound (synthesized, no audio files) ---------- */
+let soundOn = (function(){
+  try{ return localStorage.getItem('eot-sound') !== 'off'; }catch(e){ return true; }
+})();
+let audioCtx = null;
+function ensureAudioCtx(){
+  if(!audioCtx){
+    try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
+  }
+  return audioCtx;
+}
+function playTone(freq, duration, vol){
+  if(!soundOn) return;
+  const ctx = ensureAudioCtx();
+  if(!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = freq;
+  gain.gain.value = 0;
+  osc.connect(gain); gain.connect(ctx.destination);
+  const now = ctx.currentTime;
+  gain.gain.linearRampToValueAtTime(vol||0.045, now+0.008);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now+duration);
+  osc.start(now);
+  osc.stop(now+duration+0.02);
+}
+function playClick(){ playTone(720, .06, .045); }
+function playChime(){ playTone(660, .18, .05); setTimeout(()=>playTone(880, .22, .045), 90); }
+function applySound(on){
+  soundOn = on;
+  try{ localStorage.setItem('eot-sound', on ? 'on' : 'off'); }catch(e){}
+  document.querySelectorAll('.sound-toggle').forEach(b=>b.classList.toggle('is-off', !on));
+}
+document.querySelectorAll('.sound-toggle').forEach(btn=>{
+  btn.addEventListener('click', ()=>applySound(!soundOn));
+});
+applySound(soundOn);
+
+/* ---------- completion celebration (checkmark burst) ---------- */
+function celebrate(){
+  if(prefersReducedMotion()) return;
+  const burst = el(`<div class="grade-burst" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="54" height="54" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+    </div>`);
+  document.body.appendChild(burst);
+  setTimeout(()=>burst.remove(), 900);
+}
+
 function toast(msg, type){
   const t = $('#toast');
   clearTimeout(t._hideTimer);
@@ -1631,9 +1837,30 @@ document.addEventListener('keydown', (e)=>{
   if(e.key >= '1' && e.key <= '9'){
     const rows = $$('.qrow');
     const row = rows[parseInt(e.key, 10) - 1];
-    if(row) row.click();
+    if(row){
+      row.click();
+      row.classList.remove('kbd-flash');
+      void row.offsetWidth; // restart the flash animation even if the same row was just flashed
+      row.classList.add('kbd-flash');
+      setTimeout(()=>row.classList.remove('kbd-flash'), 500);
+    }
   }
 });
+
+/* ---------- parallax: background blobs drift slower than the question list ---------- */
+(function bindParallax(){
+  const target = document.getElementById('questions');
+  if(!target) return;
+  let raf = null;
+  target.addEventListener('scroll', ()=>{
+    if(prefersReducedMotion() || raf) return;
+    raf = requestAnimationFrame(()=>{
+      const y = target.scrollTop * 0.04;
+      document.documentElement.style.setProperty('--parallax-y', y+'px');
+      raf = null;
+    });
+  }, {passive:true});
+})();
 
 async function apiGet(url){
   const r = await fetch(url);
@@ -1686,10 +1913,24 @@ function initialsOf(name){
 }
 
 let pendingInitialLoad = true;
+let pendingIndicatorEl = el('<div class="pending-indicator" aria-hidden="true"></div>');
+function updatePendingIndicator(){
+  const list = $('#pending-list');
+  const active = list && list.querySelector('.pending-item.active');
+  if(!active){
+    pendingIndicatorEl.style.opacity = '0';
+    pendingIndicatorEl.style.height = '0px';
+    return;
+  }
+  pendingIndicatorEl.style.transform = `translateY(${active.offsetTop}px)`;
+  pendingIndicatorEl.style.height = active.offsetHeight + 'px';
+  pendingIndicatorEl.style.opacity = '1';
+}
 async function loadPending(){
   const list = $('#pending-list');
   const errBox = $('#pending-error');
   const emptyBox = $('#pending-empty');
+  const wasInitialLoad = pendingInitialLoad;
   if(pendingInitialLoad){
     list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
     emptyBox.style.display = 'none';
@@ -1721,7 +1962,7 @@ async function loadPending(){
   pendingCache.forEach(p=>{ totalByUser[p.username] = (totalByUser[p.username]||0) + 1; });
   const seenByUser = {};
 
-  pendingCache.forEach(p=>{
+  pendingCache.forEach((p, idx)=>{
     const active = currentResponse && currentResponse.response_id===p.response_id;
     seenByUser[p.username] = (seenByUser[p.username]||0) + 1;
     const isRepeat = totalByUser[p.username] > 1;
@@ -1736,6 +1977,8 @@ async function loadPending(){
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
         </span>
       </div>`);
+    if(wasInitialLoad) item.style.setProperty('--stagger', (Math.min(idx,10)*45)+'ms');
+    else item.style.animation = 'none';
     item.querySelector('.tdot').classList.add(urgencyLevel(p.submitted_at));
     item.querySelector('.u').textContent = p.username;
     if(isRepeat) item.querySelector('.attempt-tag').textContent = `· Attempt #${seenByUser[p.username]}`;
@@ -1744,6 +1987,8 @@ async function loadPending(){
     item.addEventListener('click', ()=>selectResponse(p.response_id));
     list.appendChild(item);
   });
+  list.appendChild(pendingIndicatorEl);
+  requestAnimationFrame(updatePendingIndicator);
 }
 
 function hasUnsavedMarks(){
@@ -1783,7 +2028,7 @@ async function selectResponse(rid){
   wrongIds = new Set();
   syncedScores = {};
   currentResponse.questions.forEach(q=>{ if(q.awarded != null) syncedScores[q.id] = q.awarded; });
-  renderGrading();
+  withViewTransition(renderGrading);
   loadPending();
   $('#fab').removeAttribute('disabled');
 }
@@ -1822,7 +2067,13 @@ function renderGrading(){
     const hasChoices = !!(q.type && q.options && q.options.length);
     const row = el(`<div class="qrow" data-id="${q.id}" data-section-index="${q.section_index}">
         <div class="qrow-head">
-          <span class="tag">Question ${idx+1}</span>
+          <span class="tag">
+            <span class="qstatus-icon" aria-hidden="true">
+              <svg class="qs-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+              <svg class="qs-x" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </span>
+            Question ${idx+1}
+          </span>
           <div class="points-edit" title="Points awarded to THIS student for this question">
             <input type="number" class="points-input" min="0" step="1" placeholder="pts" value="${q.awarded != null ? q.awarded : (q.points != null ? q.points : '')}">
             <button type="button" class="iconbtn points-sync-btn" title="Push this score to the Form now">
@@ -1974,6 +2225,7 @@ function renderGrading(){
       recomputeTotals();
     });
     row.addEventListener('click', ()=>{
+      playClick();
       if(wrongIds.has(q.id)){ wrongIds.delete(q.id); row.classList.remove('wrong'); }
       else { wrongIds.add(q.id); row.classList.add('wrong'); }
       updateWrongCount();
@@ -1981,7 +2233,7 @@ function renderGrading(){
     box.appendChild(row);
   });
   closeSection();
-  recomputeTotals();
+  recomputeTotals(true);
 }
 
 // Sums awarded-vs-max points per section (and overall) from what's
@@ -1989,7 +2241,39 @@ function renderGrading(){
 // footers and the header badge. Runs on every points-input change so the
 // totals always reflect what's on screen, even before a score finishes
 // syncing to the Form.
-function recomputeTotals(){
+const SCORE_RING_CIRCUMFERENCE = 69.12;
+let scoreCountRaf = null;
+function setScoreTotal(got, max, animate){
+  const badge = $('#score-total');
+  const ring = $('#score-ring-fg');
+  if(scoreCountRaf){ cancelAnimationFrame(scoreCountRaf); scoreCountRaf = null; }
+  const pct = max > 0 ? Math.min(1, got/max) : 0;
+  if(ring) ring.style.strokeDashoffset = (SCORE_RING_CIRCUMFERENCE * (1-pct)).toFixed(2);
+  if(!badge) return;
+  if(animate && !prefersReducedMotion() && got > 0){
+    const duration = 550;
+    const t0 = performance.now();
+    const step = (t)=>{
+      const p = Math.min(1, (t-t0)/duration);
+      const eased = 1 - Math.pow(1-p, 3);
+      badge.textContent = Math.round(got*eased) + ' / ' + max + ' pts';
+      if(p < 1) scoreCountRaf = requestAnimationFrame(step);
+      else { badge.textContent = got + ' / ' + max + ' pts'; scoreCountRaf = null; }
+    };
+    scoreCountRaf = requestAnimationFrame(step);
+  } else {
+    badge.textContent = got + ' / ' + max + ' pts';
+  }
+}
+
+// Sums awarded-vs-max points per section (and overall) from what's
+// currently in the score inputs, and writes the totals into the section
+// footers and the header badge. Runs on every points-input change so the
+// totals always reflect what's on screen, even before a score finishes
+// syncing to the Form. Pass animate=true only on first paint of an exam so
+// the header total ticks up rather than jumping — every live edit after
+// that updates instantly to stay responsive.
+function recomputeTotals(animate){
   if(!currentResponse) return;
   const pointsMax = {};
   currentResponse.questions.forEach(q=>{ pointsMax[q.id] = q.points; });
@@ -2011,8 +2295,7 @@ function recomputeTotals(){
     rowEl.querySelector('.stv-got').textContent = bySection[idx].got;
     rowEl.querySelector('.stv-max').textContent = bySection[idx].max;
   });
-  const totalBadge = $('#score-total');
-  if(totalBadge) totalBadge.textContent = grandGot + ' / ' + grandMax + ' pts';
+  setScoreTotal(grandGot, grandMax, !!animate);
 }
 
 function updateWrongCount(){
@@ -2025,6 +2308,7 @@ function updateWrongCount(){
 
 $('#clear-marks-btn').addEventListener('click', ()=>{
   if(wrongIds.size === 0) return;
+  playClick();
   wrongIds.clear();
   $$('.qrow.wrong').forEach(r=>r.classList.remove('wrong'));
   updateWrongCount();
@@ -2038,7 +2322,7 @@ function openFormView(q){
   const selected = new Set(q.selected || []);
   const correct = q.correct ? new Set(q.correct) : null;
   const isCheckbox = q.type === 'CHECKBOX';
-  q.options.forEach(opt=>{
+  q.options.forEach((opt, idx)=>{
     const isSelected = selected.has(opt);
     const isCorrect = correct ? correct.has(opt) : null;
     let cls = 'fv-opt';
@@ -2047,6 +2331,7 @@ function openFormView(q){
     else if(isSelected) cls += ' fv-selected';
     else if(isCorrect === true) cls += ' fv-missed';
     const row = el(`<div class="${cls}"><span class="fv-mark"></span><span class="fv-text"></span></div>`);
+    row.style.setProperty('--stagger', (idx*35)+'ms');
     row.querySelector('.fv-mark').textContent = isSelected ? (isCheckbox ? '☑' : '●') : (isCheckbox ? '☐' : '○');
     row.querySelector('.fv-text').textContent = opt;
     box.appendChild(row);
@@ -2076,8 +2361,11 @@ function resetGradingPanel(){
   $('#grading-skeleton').style.display='none';
   $('#placeholder').style.display='flex';
   $('#fab').setAttribute('disabled','disabled');
+  if(scoreCountRaf){ cancelAnimationFrame(scoreCountRaf); scoreCountRaf = null; }
   const totalBadge = $('#score-total');
   if(totalBadge) totalBadge.textContent = '';
+  const ring = $('#score-ring-fg');
+  if(ring) ring.style.strokeDashoffset = SCORE_RING_CIRCUMFERENCE;
 }
 
 $('#fab').addEventListener('click', ()=>{
@@ -2125,6 +2413,8 @@ async function submitGrade(result){
     }
     $('#msg-title').textContent = result==='fail' ? 'Exam failed' : 'Exam passed';
     $('#msg-text').value = data.message;
+    celebrate();
+    playChime();
     openModal('ov-message');
     resetGradingPanel();
     loadPending();
@@ -2177,6 +2467,7 @@ $('#discard-btn').addEventListener('click', async ()=>{
 let recentInitialLoad = true;
 async function loadRecent(){
   const list = $('#recent-list');
+  const wasInitialLoad = recentInitialLoad;
   if(recentInitialLoad){
     list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
     $('#recent-empty').style.display = 'none';
@@ -2192,7 +2483,7 @@ async function loadRecent(){
   const items = data.recent || [];
   $('#recent-count').textContent = items.length;
   $('#recent-empty').style.display = items.length===0 ? 'block':'none';
-  items.forEach(r=>{
+  items.forEach((r, idx)=>{
     const row = el(`<div class="recent-item">
         <div class="ri-left">
           <div class="avatar"></div>
@@ -2211,6 +2502,8 @@ async function loadRecent(){
           </button>
         </div>
       </div>`);
+    if(wasInitialLoad) row.style.setProperty('--stagger', (Math.min(idx,10)*45)+'ms');
+    else row.style.animation = 'none';
     const ravatar = row.querySelector('.avatar');
     ravatar.textContent = initialsOf(r.username);
     ravatar.style.background = avatarColor(r.username || '');
@@ -2247,18 +2540,22 @@ async function init(){
     const r = await fetch('/api/me');
     if(r.status === 401) throw new Error('unauthenticated');
     const me = await r.json();
-    $('#app').style.display='grid';
-    $('#login-view').style.display='none';
-    $('#theme-toggle').style.display='none';
+    withViewTransition(()=>{
+      $('#app').style.display='grid';
+      $('#login-view').style.display='none';
+      $('#theme-toggle').style.display='none';
+    });
     $('#acct-email').textContent = me.email;
     await loadPending();
     await loadRecent();
     setInterval(loadPending, 45000);
     setInterval(loadRecent, 30000);
   }catch(e){
-    $('#app').style.display='none';
-    $('#login-view').style.display='flex';
-    $('#theme-toggle').style.display='flex';
+    withViewTransition(()=>{
+      $('#app').style.display='none';
+      $('#login-view').style.display='flex';
+      $('#theme-toggle').style.display='flex';
+    });
   }
 }
 init();
