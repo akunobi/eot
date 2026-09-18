@@ -676,6 +676,63 @@ def push_score_to_bridge(form_id, response_id, question_id, question_title, scor
     return True, result
 
 
+def delete_response_from_bridge(form_id, response_id, response_created_time, username=None):
+    """Calls the Apps Script bridge web app to delete a single response from
+    the Form itself, via FormApp.Form.deleteResponse(). Returns
+    (ok, result_dict_or_error_string).
+
+    Like push_score_to_bridge, this can't hand the bridge the REST API's
+    response_id directly — Apps Script's FormResponse IDs live in a
+    different ID space — so the bridge must resolve the actual response by
+    matching response_created_time (and username, if it can parse one from
+    the answers) before calling deleteResponse(). This requires the bridge
+    web app (bridge.gs) to implement an "action": "delete_response" branch;
+    see APPS_SCRIPT_BRIDGE_SETUP.md.
+
+    Note: Form.deleteResponse() only removes the response from the Form's
+    own response store / summary view. If this Form also has a linked
+    Google Sheet as a response destination, that copy is NOT deleted — the
+    person will need to remove it from the Sheet separately.
+    """
+    if not APPS_SCRIPT_BRIDGE_URL or not APPS_SCRIPT_BRIDGE_SECRET:
+        return False, (
+            "The Apps Script bridge isn't configured. Set APPS_SCRIPT_BRIDGE_URL and "
+            "APPS_SCRIPT_BRIDGE_SECRET (see APPS_SCRIPT_BRIDGE_SETUP.md)."
+        )
+
+    payload = json.dumps({
+        "secret": APPS_SCRIPT_BRIDGE_SECRET,
+        "action": "delete_response",
+        "form_id": form_id,
+        "response_id": response_id,
+        "response_created_time": response_created_time,
+        "username": username,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        APPS_SCRIPT_BRIDGE_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        return False, f"The bridge returned HTTP {exc.code}. Check the deployment's access setting."
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Could not reach the Apps Script bridge: {exc}"
+
+    try:
+        result = json.loads(body)
+    except (TypeError, ValueError):
+        return False, "The bridge returned something that wasn't valid JSON (check the deployment URL/logs)."
+
+    if not result.get("ok"):
+        return False, result.get("error") or "The Form rejected the delete request."
+    return True, result
+
+
 @app.route("/api/set_response_score", methods=["POST"])
 @login_required
 def api_set_response_score():
@@ -853,9 +910,46 @@ def api_delete():
     data = request.get_json(force=True, silent=True) or {}
     response_id = data.get("response_id")
     username = data.get("username", "")
+    delete_from_form = bool(data.get("delete_from_form"))
     if not response_id:
         return jsonify({"error": "Missing response_id."}), 400
 
+    form_deleted = None      # None = not attempted, True/False = attempted
+    form_delete_error = None
+
+    if delete_from_form:
+        creds = request.google_creds
+        form_id = find_form_id(creds, FORM_TITLE)
+        if not form_id:
+            form_deleted = False
+            form_delete_error = f'Form "{FORM_TITLE}" not found.'
+        else:
+            response_created_time = None
+            try:
+                responses = list_all_responses(creds, form_id)
+                target = next((r for r in responses if r.get("responseId") == response_id), None)
+                if target:
+                    response_created_time = target.get("lastSubmittedTime") or target.get("createTime")
+            except Exception as exc:  # noqa: BLE001
+                form_deleted = False
+                form_delete_error = f"Could not look up the response on the Form: {exc}"
+
+            if form_deleted is None:  # lookup didn't already fail
+                if not response_created_time:
+                    # Already gone from the Form (deleted by hand, etc.) — nothing to delete there.
+                    form_deleted = False
+                    form_delete_error = "That response was not found on the Form (it may already be gone)."
+                else:
+                    ok, result = delete_response_from_bridge(
+                        form_id, response_id, response_created_time, username=username or None,
+                    )
+                    form_deleted = ok
+                    form_delete_error = None if ok else str(result)
+
+    # The local record is always archived/removed from view, regardless of
+    # whether the Form-side deletion succeeded — a failed remote delete
+    # shouldn't trap a stray row in the grader's own lists, and the person
+    # is told about the failure via form_delete_error either way.
     db = get_db()
     row = db.execute("SELECT response_id FROM ledger WHERE response_id = ?", (response_id,)).fetchone()
     if row:
@@ -868,7 +962,7 @@ def api_delete():
         )
     db.commit()
     db.close()
-    return jsonify({"error": None})
+    return jsonify({"error": None, "form_deleted": form_deleted, "form_delete_error": form_delete_error})
 
 
 @app.route("/api/recent")
@@ -1013,10 +1107,10 @@ button,textarea,input{font-family:inherit;}
 /* ---------- ambient background (gradient mesh + grain + parallax) ---------- */
 .ambient-bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;}
 .ambient-parallax{position:absolute;inset:-4%;transform:translate3d(0, var(--parallax-y, 0px), 0);will-change:transform;}
-.ambient-bg .blob{position:absolute;border-radius:50%;filter:blur(70px);will-change:transform;}
-.ambient-bg .blob-1{width:640px;height:640px;left:-160px;top:-200px;background:radial-gradient(circle, var(--atmos-1), transparent 70%);animation:driftA 26s var(--ease) infinite alternate;}
-.ambient-bg .blob-2{width:520px;height:520px;right:-160px;top:8%;background:radial-gradient(circle, var(--atmos-2), transparent 70%);animation:driftB 32s var(--ease) infinite alternate;}
-.ambient-bg .blob-3{width:460px;height:460px;left:18%;bottom:-220px;background:radial-gradient(circle, var(--atmos-1), transparent 70%);animation:driftC 29s var(--ease) infinite alternate;}
+.ambient-bg .blob{position:absolute;border-radius:50%;filter:blur(38px);will-change:transform;}
+.ambient-bg .blob-1{width:460px;height:460px;left:-140px;top:-160px;background:radial-gradient(circle, var(--atmos-1), transparent 70%);animation:driftA 26s steps(26,end) infinite alternate;}
+.ambient-bg .blob-2{width:380px;height:380px;right:-140px;top:8%;background:radial-gradient(circle, var(--atmos-2), transparent 70%);animation:driftB 32s steps(24,end) infinite alternate;}
+.ambient-bg .blob-3{width:340px;height:340px;left:18%;bottom:-180px;background:radial-gradient(circle, var(--atmos-1), transparent 70%);animation:driftC 29s steps(22,end) infinite alternate;}
 @keyframes driftA{from{transform:translate3d(0,0,0);}to{transform:translate3d(70px,50px,0);}}
 @keyframes driftB{from{transform:translate3d(0,0,0);}to{transform:translate3d(-60px,60px,0);}}
 @keyframes driftC{from{transform:translate3d(0,0,0);}to{transform:translate3d(45px,-55px,0);}}
@@ -1028,7 +1122,7 @@ button,textarea,input{font-family:inherit;}
 [data-theme="dark"] .ambient-bg .grain{opacity:.05;}
 @media (prefers-reduced-motion: reduce){.ambient-bg .blob{animation:none;}}
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-  .panel{background:var(--surface)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
+  #grading-panel, .home-card{background:var(--surface)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
 }
 
 /* ---------- view transitions (login <-> dashboard, switching attempts) ---------- */
@@ -1093,11 +1187,18 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 .panel{
   background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius);
   padding:18px 20px;box-shadow:var(--shadow);
-  backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
   transition:background-color .2s var(--ease), border-color .2s var(--ease), box-shadow .2s var(--ease);
   display:flex;flex-direction:column;min-height:0;
 }
-#grading-panel{background:var(--glass-bg);border:1px solid var(--glass-border);padding:22px;box-shadow:var(--shadow);}
+/* Only the main grading card gets a live backdrop blur — that's the one
+   surface the eye rests on most, and a single small-radius blur is far
+   cheaper than blurring three large panels at once (backdrop-filter has to
+   re-sample whatever is moving behind it, so limiting it to one panel and
+   keeping the radius small keeps this from competing with grading for CPU). */
+#grading-panel{
+  background:var(--glass-bg);border:1px solid var(--glass-border);padding:22px;box-shadow:var(--shadow);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+}
 .recent-panel{max-height:34vh;margin-top:20px;}
 .recent-panel #recent-list{overflow-y:auto;}
 #pending-list{flex:1;min-height:0;overflow-y:auto;padding-right:2px;position:relative;}
@@ -1416,7 +1517,7 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 .home-card{
   position:relative;z-index:1;width:100%;max-width:360px;text-align:center;
   background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:14px;
-  backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   padding:36px 30px 30px;box-shadow:var(--shadow-float);
   animation:cardIn .5s var(--ease) both;
 }
@@ -2517,14 +2618,20 @@ async function loadRecent(){
     row.querySelector('[data-act="del"]').addEventListener('click', async ()=>{
       const ok = await confirmDialog(
         'Delete this record?',
-        `This removes ${r.username}'s graded record from the recently graded list.`,
+        `This removes ${r.username}'s graded record from the recently graded list and deletes their submission from the Google Form.`,
         'Delete', 'red'
       );
       if(!ok) return;
       try{
-        await apiPost('/api/delete', {response_id: r.response_id});
+        const res = await apiPost('/api/delete', {response_id: r.response_id, username: r.username, delete_from_form: true});
         loadRecent();
-        toast('Record deleted', 'success');
+        if(res.form_deleted === true){
+          toast('Record deleted and removed from the Form', 'success');
+        } else if(res.form_deleted === false){
+          toast(`Removed from the list, but couldn't delete it from the Form: ${res.form_delete_error || 'unknown error'}`, 'error');
+        } else {
+          toast('Record deleted', 'success');
+        }
       }catch(e){
         if(e.message !== 'auth') toast("Couldn't delete — check your connection.", 'error');
       }
