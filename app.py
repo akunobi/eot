@@ -1202,7 +1202,7 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 .recent-panel{max-height:34vh;margin-top:20px;}
 .recent-panel #recent-list{overflow-y:auto;}
 #pending-list{flex:1;min-height:0;overflow-y:auto;padding-right:2px;position:relative;}
-.panel h2{font-size:.875rem;font-weight:600;color:var(--text);margin:0 0 12px;display:flex;justify-content:space-between;align-items:center;animation:headIn .45s var(--ease) both;}
+.panel h2{font-size:.875rem;font-weight:600;color:var(--text);margin:0 0 12px;display:flex;justify-content:space-between;align-items:center;animation:headIn .45s var(--ease) forwards;}
 .panel h2 .count{
   color:var(--blue);font-weight:600;font-size:.72rem;background:var(--blue-dim);
   border-radius:20px;padding:2px 9px;
@@ -1290,7 +1290,7 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 #grading-body{display:flex;flex-direction:column;flex:1;min-height:0;}
 #questions{flex:1;overflow-y:auto;padding-right:2px;}
 .grading-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;flex-wrap:wrap;flex:none;}
-.grading-head .u{font-size:1.15rem;font-weight:600;animation:headIn .4s var(--ease) both;}
+.grading-head .u{font-size:1.15rem;font-weight:600;animation:headIn .4s var(--ease) forwards;}
 .grading-head .t{color:var(--text-dim);font-size:.85rem;margin-top:3px;}
 .link-btn{background:none;border:none;color:var(--text-dim);text-decoration:underline;cursor:pointer;font-size:.85rem;padding:0;}
 .link-btn:hover{color:var(--red);}
@@ -1357,9 +1357,9 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 .fv-options{display:flex;flex-direction:column;gap:7px;margin:14px 0;}
 .fv-opt{
   display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:.9rem;
-  opacity:0;transform:translateY(4px);animation:fvIn .28s var(--ease) both;animation-delay:var(--stagger, 0ms);
+  animation:fvIn .28s var(--ease) both;animation-delay:var(--stagger, 0ms);
 }
-@keyframes fvIn{to{opacity:1;transform:translateY(0);}}
+@keyframes fvIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
 .fv-opt .fv-mark{width:16px;flex:none;text-align:center;color:var(--text-dim);}
 .fv-selected{border-color:var(--text-dim);}
 .fv-right{border-color:var(--green);background:var(--green-dim);color:var(--green);}
@@ -1519,7 +1519,7 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
   background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:14px;
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   padding:36px 30px 30px;box-shadow:var(--shadow-float);
-  animation:cardIn .5s var(--ease) both;
+  animation:cardIn .5s var(--ease) forwards;
 }
 @keyframes cardIn{from{opacity:0;transform:translateY(10px) scale(.985);}to{opacity:1;transform:translateY(0) scale(1);}}
 .home-badge{
@@ -1527,7 +1527,7 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
   display:flex;align-items:center;justify-content:center;
   background:var(--blue-dim);color:var(--blue);
 }
-.home-card h1{font-size:1.15rem;font-weight:600;margin-bottom:8px;animation:headIn .5s var(--ease) both;}
+.home-card h1{font-size:1.15rem;font-weight:600;margin-bottom:8px;animation:headIn .5s var(--ease) forwards;}
 .home-card p{color:var(--text-dim);font-size:.85rem;line-height:1.5;margin:0 0 26px;}
 .google-btn{
   display:flex;align-items:center;justify-content:center;gap:10px;
@@ -2418,6 +2418,15 @@ $('#clear-marks-btn').addEventListener('click', ()=>{
 
 function openFormView(q){
   $('#fv-title').textContent = q.title;
+  // Show the modal FIRST, then populate it. #fv-options lives inside the
+  // #ov-formview overlay, which starts as display:none — CSS entrance
+  // animations declared on elements built while an ancestor is display:none
+  // aren't guaranteed to (re)start once that ancestor becomes visible, and
+  // when they don't, opacity:0 rows are stuck invisible forever, i.e. a
+  // blank-looking modal. Revealing the overlay before inserting the rows
+  // sidesteps that entirely: the rows are always inserted into an
+  // already-visible container.
+  openModal('ov-formview');
   const box = $('#fv-options');
   box.innerHTML = '';
   const selected = new Set(q.selected || []);
@@ -2444,7 +2453,6 @@ function openFormView(q){
   } else {
     note.style.display = 'none';
   }
-  openModal('ov-formview');
 }
 
 window.addEventListener('beforeunload', (e)=>{
