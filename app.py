@@ -1051,8 +1051,8 @@ INDEX_HTML = """<!DOCTYPE html>
   --font-ui:"Inter","Manrope",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --ease:cubic-bezier(0.16,1,0.3,1);
   --spring:cubic-bezier(.34,1.56,.64,1);
-  --glass-bg:rgba(255,255,255,.62);
-  --glass-border:rgba(255,255,255,.55);
+  --glass-bg:rgba(255,255,255,.86);
+  --glass-border:rgba(255,255,255,.7);
   --glow-blue:0 8px 26px -10px var(--blue-soft);
 }
 [data-theme="dark"]{
@@ -1080,8 +1080,8 @@ INDEX_HTML = """<!DOCTYPE html>
   --card-glow:none;
   --card-border:rgba(255,255,255,.06);
   --divider:rgba(255,255,255,.09);
-  --glass-bg:rgba(15,18,26,.58);
-  --glass-border:rgba(255,255,255,.07);
+  --glass-bg:rgba(15,18,26,.86);
+  --glass-border:rgba(255,255,255,.09);
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
@@ -1104,25 +1104,23 @@ button,textarea,input{font-family:inherit;}
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*){animation:none!important;}
 }
 
-/* ---------- ambient background (gradient mesh + grain + parallax) ---------- */
-.ambient-bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;}
-.ambient-parallax{position:absolute;inset:-4%;transform:translate3d(0, var(--parallax-y, 0px), 0);will-change:transform;}
-.ambient-bg .blob{position:absolute;border-radius:50%;filter:blur(38px);will-change:transform;}
-.ambient-bg .blob-1{width:460px;height:460px;left:-140px;top:-160px;background:radial-gradient(circle, var(--atmos-1), transparent 70%);animation:driftA 26s steps(26,end) infinite alternate;}
-.ambient-bg .blob-2{width:380px;height:380px;right:-140px;top:8%;background:radial-gradient(circle, var(--atmos-2), transparent 70%);animation:driftB 32s steps(24,end) infinite alternate;}
-.ambient-bg .blob-3{width:340px;height:340px;left:18%;bottom:-180px;background:radial-gradient(circle, var(--atmos-1), transparent 70%);animation:driftC 29s steps(22,end) infinite alternate;}
-@keyframes driftA{from{transform:translate3d(0,0,0);}to{transform:translate3d(70px,50px,0);}}
-@keyframes driftB{from{transform:translate3d(0,0,0);}to{transform:translate3d(-60px,60px,0);}}
-@keyframes driftC{from{transform:translate3d(0,0,0);}to{transform:translate3d(45px,-55px,0);}}
-.ambient-bg .grain{
-  position:absolute;inset:-10%;opacity:.035;mix-blend-mode:overlay;
-  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-  background-size:140px 140px;
-}
-[data-theme="dark"] .ambient-bg .grain{opacity:.05;}
-@media (prefers-reduced-motion: reduce){.ambient-bg .blob{animation:none;}}
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-  #grading-panel, .home-card{background:var(--surface)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
+/* ---------- ambient background ----------
+   This used to be 3 blurred, animated "blob" divs plus a JS parallax
+   listener and a grain overlay. That combination — a live filter:blur()
+   that had to be re-rasterized every time its animation ticked, sitting
+   under panels that were ALSO live-blurring via backdrop-filter — was the
+   actual source of the reported lag, not any one effect in isolation.
+   Rather than keep tuning that combination, it's removed outright: this
+   is now a single static, unfiltered, unanimated gradient — painted once,
+   then free for the rest of the session. Still gives the dashboard a
+   soft colored wash instead of a flat fill, with none of the ongoing
+   compositing cost. */
+.ambient-bg{
+  position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(circle at 15% 8%, var(--atmos-1), transparent 40%),
+    radial-gradient(circle at 85% 15%, var(--atmos-2), transparent 40%),
+    radial-gradient(circle at 25% 95%, var(--atmos-1), transparent 40%);
 }
 
 /* ---------- view transitions (login <-> dashboard, switching attempts) ---------- */
@@ -1190,14 +1188,12 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
   transition:background-color .2s var(--ease), border-color .2s var(--ease), box-shadow .2s var(--ease);
   display:flex;flex-direction:column;min-height:0;
 }
-/* Only the main grading card gets a live backdrop blur — that's the one
-   surface the eye rests on most, and a single small-radius blur is far
-   cheaper than blurring three large panels at once (backdrop-filter has to
-   re-sample whatever is moving behind it, so limiting it to one panel and
-   keeping the radius small keeps this from competing with grading for CPU). */
+/* No backdrop-filter here (or on .home-card below) at all anymore — with
+   the ambient background now fully static, there's nothing moving behind
+   these panels for a live blur to justify; a flat translucent tint reads
+   as "glass" just fine and costs nothing per-frame. */
 #grading-panel{
   background:var(--glass-bg);border:1px solid var(--glass-border);padding:22px;box-shadow:var(--shadow);
-  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
 }
 .recent-panel{max-height:34vh;margin-top:20px;}
 .recent-panel #recent-list{overflow-y:auto;}
@@ -1531,7 +1527,6 @@ select.points-input{
 .home-card{
   position:relative;z-index:1;width:100%;max-width:360px;text-align:center;
   background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:14px;
-  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   padding:36px 30px 30px;box-shadow:var(--shadow-float);
   animation:cardIn .5s var(--ease) forwards;
 }
@@ -1586,14 +1581,7 @@ select.points-input{
 </head>
 <body>
 
-<div class="ambient-bg" aria-hidden="true">
-  <div class="ambient-parallax">
-    <div class="blob blob-1"></div>
-    <div class="blob blob-2"></div>
-    <div class="blob blob-3"></div>
-  </div>
-  <div class="grain"></div>
-</div>
+<div class="ambient-bg" aria-hidden="true"></div>
 
 <button class="theme-toggle" id="theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
   <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
@@ -1961,21 +1949,6 @@ document.addEventListener('keydown', (e)=>{
     }
   }
 });
-
-/* ---------- parallax: background blobs drift slower than the question list ---------- */
-(function bindParallax(){
-  const target = document.getElementById('questions');
-  if(!target) return;
-  let raf = null;
-  target.addEventListener('scroll', ()=>{
-    if(prefersReducedMotion() || raf) return;
-    raf = requestAnimationFrame(()=>{
-      const y = target.scrollTop * 0.04;
-      document.documentElement.style.setProperty('--parallax-y', y+'px');
-      raf = null;
-    });
-  }, {passive:true});
-})();
 
 async function apiGet(url){
   const r = await fetch(url);
