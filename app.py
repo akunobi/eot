@@ -1323,7 +1323,21 @@ header.top .sub{color:var(--text-dim);font-size:.8rem;margin-top:5px;}
 .qrow .wrong-flag{display:none;font-size:.8rem;font-weight:600;color:var(--red);flex:none;}
 .qrow.wrong .wrong-flag{display:inline;}
 .points-edit{display:flex;align-items:center;gap:5px;}
-.points-input{width:40px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 6px;font-size:.8rem;}
+.points-input{
+  width:56px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;
+  padding:3px 4px;font-size:.8rem;
+  transition:border-color 150ms var(--ease), box-shadow 150ms var(--ease);
+}
+select.points-input{
+  /* Native <select> arrow drawn manually so it matches the app's own icon
+     style instead of each browser's default affordance, while staying a
+     real <select> (full keyboard support, no JS dropdown to maintain). */
+  appearance:none;-webkit-appearance:none;-moz-appearance:none;
+  padding-right:18px;cursor:pointer;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat:no-repeat;background-position:right 4px center;background-size:9px;
+}
+.points-input:focus-visible{outline:none;border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-soft);}
 .points-base-wrap{display:flex;align-items:center;gap:3px;}
 .points-base-view{color:var(--text-dim);font-size:.8rem;font-weight:600;}
 .points-base-input{width:34px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:2px 4px;font-size:.78rem;}
@@ -2134,6 +2148,48 @@ async function selectResponse(rid){
   $('#fab').removeAttribute('disabled');
 }
 
+// Builds the descending 0.5-increment point values a question's max
+// supports, e.g. max=2 -> [2, 1.5, 1, 0.5, 0]. Walks integer half-steps
+// (rather than repeatedly subtracting 0.5) so larger max values can't
+// accumulate floating-point drift.
+function pointsStepOptions(maxPoints){
+  const halfSteps = Math.round(maxPoints * 2);
+  const out = [];
+  for(let h = halfSteps; h >= 0; h--) out.push(h / 2);
+  return out;
+}
+// Whole numbers render without a decimal (2, not 2.0); halves keep one.
+function formatPts(n){
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+// <option> markup for the awarded-points dropdown: every 0.5 step from
+// maxPoints down to 0, with `current` selected. If `current` doesn't land
+// on a clean step (a legacy score, or the max was lowered after grading),
+// it's kept as an extra option instead of being silently dropped.
+function pointsSelectInnerHtml(maxPoints, current){
+  const steps = pointsStepOptions(maxPoints);
+  const stepLabels = new Set(steps.map(formatPts));
+  let html = '';
+  if(current != null && !stepLabels.has(formatPts(current))){
+    html += `<option value="${current}" selected>${formatPts(current)} (current)</option>`;
+  }
+  html += steps.map(v=>{
+    const isSelected = (current != null && formatPts(v) === formatPts(current)) ? ' selected' : '';
+    return `<option value="${v}"${isSelected}>${formatPts(v)}</option>`;
+  }).join('');
+  return html;
+}
+// Full markup for the awarded-points control: a dropdown when the
+// question already has a max point value to build steps from, otherwise
+// the old free-typed fallback (nothing to build a range against yet).
+function pointsFieldHtml(q){
+  if(q.points == null){
+    return `<input type="number" class="points-input" min="0" step="0.5" placeholder="pts" value="${q.awarded != null ? q.awarded : ''}">`;
+  }
+  const current = q.awarded != null ? q.awarded : q.points;
+  return `<select class="points-input" title="Points awarded to THIS student for this question">${pointsSelectInnerHtml(q.points, current)}</select>`;
+}
+
 function renderGrading(){
   $('#placeholder').style.display='none';
   $('#grading-skeleton').style.display='none';
@@ -2176,7 +2232,7 @@ function renderGrading(){
             Question ${idx+1}
           </span>
           <div class="points-edit" title="Points awarded to THIS student for this question">
-            <input type="number" class="points-input" min="0" step="1" placeholder="pts" value="${q.awarded != null ? q.awarded : (q.points != null ? q.points : '')}">
+            ${pointsFieldHtml(q)}
             <button type="button" class="iconbtn points-sync-btn" title="Push this score to the Form now">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>
             </button>
@@ -2216,7 +2272,7 @@ function renderGrading(){
         openFormView(q);
       });
     }
-    const pointsInput = row.querySelector('.points-input');
+    let pointsInput = row.querySelector('.points-input');
     const syncBtn = row.querySelector('.points-sync-btn');
     const syncStatus = row.querySelector('.points-sync-status');
     let syncTimer = null;
@@ -2269,19 +2325,30 @@ function renderGrading(){
       }
     };
 
-    pointsInput.addEventListener('click', (e)=>e.stopPropagation());
-    pointsInput.addEventListener('input', ()=>{
-      syncBtn.classList.remove('is-synced');
-      syncStatus.textContent = '';
-      syncStatus.className = 'points-sync-status';
-      recomputeTotals();
-      clearTimeout(syncTimer);
-      syncTimer = setTimeout(pushNow, 700);
-    });
-    pointsInput.addEventListener('blur', ()=>{
-      clearTimeout(syncTimer);
-      pushNow();
-    });
+    // Wires the click/input/blur behavior onto whichever element is
+    // currently the awarded-points control (a <select> once the question
+    // has a max point value, or the free-typed <input> fallback before
+    // that). Called once at row creation and again by rebuildPointsField()
+    // whenever the max value changes and the control has to be swapped —
+    // `pointsInput` is a `let`, so pushNow/recomputeTotals, which close
+    // over the variable rather than a captured element, keep working
+    // correctly after a swap without needing changes themselves.
+    const attachPointsInputHandlers = (elInput)=>{
+      elInput.addEventListener('click', (e)=>e.stopPropagation());
+      elInput.addEventListener('input', ()=>{
+        syncBtn.classList.remove('is-synced');
+        syncStatus.textContent = '';
+        syncStatus.className = 'points-sync-status';
+        recomputeTotals();
+        clearTimeout(syncTimer);
+        syncTimer = setTimeout(pushNow, 700);
+      });
+      elInput.addEventListener('blur', ()=>{
+        clearTimeout(syncTimer);
+        pushNow();
+      });
+    };
+    attachPointsInputHandlers(pointsInput);
     if(q.awarded != null){
       syncBtn.classList.add('is-synced');
       syncStatus.textContent = 'Synced';
@@ -2323,6 +2390,22 @@ function renderGrading(){
       baseView.style.display = 'inline';
       baseEditBtn.style.display = 'inline-flex';
       toast('Point value saved to the Form', 'success');
+      // The awarded-points dropdown's options depend on the max we just
+      // changed, so it needs rebuilding — either refreshed in place (it
+      // was already a <select>) or upgraded from the free-typed fallback
+      // (this question had no max before now, so pointsInput was a plain
+      // <input>). q.points is guaranteed non-null at this point, so the
+      // rebuilt control is always a <select> either way.
+      const currentVal = pointsInput.value !== '' ? parseFloat(pointsInput.value) : null;
+      const optsHtml = pointsSelectInnerHtml(q.points, currentVal != null ? currentVal : q.points);
+      if(pointsInput.tagName === 'SELECT'){
+        pointsInput.innerHTML = optsHtml;
+      } else {
+        const newField = el(`<select class="points-input" title="Points awarded to THIS student for this question">${optsHtml}</select>`);
+        pointsInput.replaceWith(newField);
+        pointsInput = newField;
+        attachPointsInputHandlers(pointsInput);
+      }
       recomputeTotals();
     });
     row.addEventListener('click', ()=>{
